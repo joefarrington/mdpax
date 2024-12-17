@@ -1,0 +1,118 @@
+"""Tests for the Forest MDP problem."""
+
+import pytest
+import numpy as np
+import mdptoolbox.example
+from mdpax.problems.forest import Forest
+import jax.numpy as jnp
+
+def test_forest_matrices_match_original():
+    """Test that our Forest implementation matches the original."""
+    # Parameters to test
+    S, r1, r2, p = 3, 4.0, 2.0, 0.1
+    
+    # Get matrices from original implementation
+    P_orig, R_orig = mdptoolbox.example.forest(S=S, r1=r1, r2=r2, p=p)
+    
+    # Get matrices from our implementation
+    forest = Forest(S=S, r1=r1, r2=r2, p=p)
+    P_new, R_new = forest.build_matrices()
+    
+    # Convert JAX arrays to numpy for comparison
+    P_new = np.array(P_new)
+    R_new = np.array(R_new)
+    
+    # Compare transition matrices
+    np.testing.assert_allclose(
+        P_orig, P_new,
+        rtol=1e-5,
+        err_msg="Transition matrices don't match"
+    )
+    
+    # Compare reward matrices
+    np.testing.assert_allclose(
+        R_orig, R_new,
+        rtol=1e-5,
+        err_msg="Reward matrices don't match"
+    )
+
+@pytest.mark.parametrize("params", [
+    {"S": 3, "r1": 4.0, "r2": 2.0, "p": 0.1},  # Default
+    {"S": 5, "r1": 10.0, "r2": 5.0, "p": 0.05},  # Different size and rewards
+    {"S": 4, "r1": 2.0, "r2": 8.0, "p": 0.2},  # Higher fire risk
+])
+def test_forest_different_parameters(params):
+    """Test that matrices match for different parameter settings."""
+    # Get matrices from both implementations
+    P_orig, R_orig = mdptoolbox.example.forest(**params)
+    
+    forest = Forest(**params)
+    P_new, R_new = forest.build_matrices()
+    
+    # Convert to numpy
+    P_new = np.array(P_new)
+    R_new = np.array(R_new)
+    
+    # Compare
+    np.testing.assert_allclose(P_orig, P_new, rtol=1e-5)
+    np.testing.assert_allclose(R_orig, R_new, rtol=1e-5)
+
+def test_forest_properties():
+    """Test basic properties of the forest implementation."""
+    forest = Forest()
+    
+    # Test dimensions
+    assert len(forest.get_states()) == forest.S
+    assert len(forest.get_actions()) == 2  # wait, cut
+    assert len(forest.get_random_outcomes()) == 2  # no fire, fire
+    
+    # Test state indexing
+    for i in range(forest.S):
+        assert forest.get_state_index(jnp.array([i])) == i
+    
+    # Test initial values
+    initial_values = forest.initial_value()
+    assert initial_values.shape == (forest.S,)
+    assert np.all(initial_values == 0)
+
+def test_forest_transitions():
+    """Test specific transitions and rewards."""
+    forest = Forest(S=3, r1=4.0, r2=2.0, p=0.1)
+    
+    # Test cutting a mature tree
+    next_state, reward = forest.deterministic_transition(
+        state=jnp.array([2]),  # Mature tree
+        action=forest.ACTIONS[1],  # Cut
+        outcome=forest.OUTCOMES[0]  # No fire (shouldn't matter)
+    )
+    assert reward == 2.0  # r2 for mature
+    assert next_state == 0  # Reset to young
+    
+    # Test waiting with no fire
+    next_state, reward = forest.deterministic_transition(
+        state=jnp.array([1]),  # Middle age
+        action=forest.ACTIONS[0],  # Wait
+        outcome=forest.OUTCOMES[0]  # No fire
+    )
+    assert reward == 0.0  # No reward for waiting
+    assert next_state == 2  # Age increases
+
+def test_forest_probabilities():
+    """Test outcome probabilities."""
+    forest = Forest(S=3, p=0.1)
+    
+    # Test waiting action
+    probs = forest.get_outcome_probabilities(
+        state=1,
+        action=forest.ACTIONS[0],  # Wait
+        possible_random_outcomes=forest.OUTCOMES
+    )
+    assert np.allclose(probs, [0.9, 0.1])  # [no_fire, fire]
+    
+    # Test cutting action
+    probs = forest.get_outcome_probabilities(
+        state=1,
+        action=forest.ACTIONS[1],  # Cut
+        possible_random_outcomes = forest.OUTCOMES
+    )
+    assert np.allclose(probs, [1.0, 0.0])  # Always succeeds

@@ -1,0 +1,30 @@
+[project]
+name = "mdpax"
+version = "0.0.1"
+description = "GPU-accelerated MDP solvers in Python with JAX"
+authors = [{name = "Joe Farrington", email = "farrington.joe@gmail.com"}]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "jax[cuda12]>=0.4.30",
+    "pandas>=2.2.3",
+    "chex>=0.1.88",
+    "numpyro>=0.16.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pymdptoolbox>=4.0b3",
+    "jupyter>=1.1.1",
+    "black>=24.10.0",
+    "ruff>=0.8.3",
+    "pytest>=8.3.4",
+    "ipython>=8.18.1",
+    "matplotlib>=3.9.4",
+    "seaborn>=0.13.2",
+    "pytest-datadir>=1.5.0",
+]
