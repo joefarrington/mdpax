@@ -136,15 +136,15 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         stock_a = jnp.sum(
             jax.lax.dynamic_slice(
                 state,
-                (self.state_component_lookup["stock_a_start"],),
-                (self.state_component_lookup["stock_a_len"],),
+                (self.state_component_lookup["stock_a"][0],),
+                (self.state_component_lookup["stock_a"][1],),
             )
         )
         stock_b = jnp.sum(
             jax.lax.dynamic_slice(
                 state,
-                (self.state_component_lookup["stock_b_start"],),
-                (self.state_component_lookup["stock_b_len"],),
+                (self.state_component_lookup["stock_b"][0],),
+                (self.state_component_lookup["stock_b"][1],),
             )
         )
         # Issued a less than stock of a, issued b less than stock of b
@@ -166,16 +166,16 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     ) -> Tuple[chex.Array, float]:
         """Returns the next state and single-step reward for the provided
         state, action and random event"""
-        opening_stock_a = state[
-            self.state_component_lookup["stock_a_start"] : self.state_component_lookup[
-                "stock_a_stop"
-            ]
-        ]
-        opening_stock_b = state[
-            self.state_component_lookup["stock_b_start"] : self.state_component_lookup[
-                "stock_b_stop"
-            ]
-        ]
+        opening_stock_a = jax.lax.dynamic_slice(
+            state,
+            (self.state_component_lookup["stock_a"][0],),
+            (self.state_component_lookup["stock_a"][1],),
+        )
+        opening_stock_b = jax.lax.dynamic_slice(
+            state,
+            (self.state_component_lookup["stock_b"][0],),
+            (self.state_component_lookup["stock_b"][1],),
+        )
 
         issued_a = random_event[self.event_component_lookup["issued_a"]]
         issued_b = random_event[self.event_component_lookup["issued_b"]]
@@ -212,23 +212,14 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     ### Supporting functions for self.transition() ###
     ##################################################
 
-    def _construct_state_component_lookup(self) -> dict[str, int]:
-        """Returns a dictionary that maps descriptive names of the components of a state
-        to indices of the elements in the state array"""
-        state_component_lookup = {}
-        state_component_lookup["stock_a_start"] = 0
-        state_component_lookup["stock_a_len"] = self.max_useful_life
-        state_component_lookup["stock_a_stop"] = (
-            state_component_lookup["stock_a_start"]
-            + state_component_lookup["stock_a_len"]
-        )
-        state_component_lookup["stock_b_start"] = state_component_lookup["stock_a_stop"]
-        state_component_lookup["stock_b_len"] = self.max_useful_life
-        state_component_lookup["stock_b_stop"] = (
-            state_component_lookup["stock_b_start"]
-            + state_component_lookup["stock_b_len"]
-        )
-        return state_component_lookup
+    def _construct_state_component_lookup(self) -> dict[str, tuple[int, int]]:
+        """Returns a dictionary mapping component names to (start, length)
+        tuples for slicing."""
+        m = self.max_useful_life
+        return {
+            "stock_a": (0, m),  # (start, length) for dynamic_slice
+            "stock_b": (m, m),  # (start, length) for dynamic_slice
+        }
 
     def _construct_event_component_lookup(self) -> dict[str, int]:
         """Returns a dictionary that maps descriptive names of the components of a event
