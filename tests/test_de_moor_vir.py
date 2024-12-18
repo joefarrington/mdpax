@@ -1,11 +1,13 @@
-import pytest
-import pandas as pd
-import numpy as np
-import jax
-import jax.numpy as jnp
 import os
+
+import jax
+import numpy as np
+import pandas as pd
+import pytest
+
 from mdpax.problems.de_moor_perishable import DeMoorPerishable
 from mdpax.solvers.value_iteration import ValueIterationRunner
+
 
 # Compare policy output by DeMoorPerishableVIR with policies
 # printed in Fig 3 of De Moor et al (2022)
@@ -33,7 +35,9 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = DeMoorPerishable(issue_policy=issuing_policy)
-        vi_runner = ValueIterationRunner(problem, max_batch_size=150, gamma=0.99, epsilon=1e-5)
+        vi_runner = ValueIterationRunner(
+            problem, max_batch_size=150, gamma=0.99, epsilon=1e-5
+        )
         vi_output = vi_runner.run_value_iteration(max_iter=10000)
 
         # Post-process policy to match reported form

@@ -1,1 +1,1 @@
-from . import mdp
+from . import mdp as mdp

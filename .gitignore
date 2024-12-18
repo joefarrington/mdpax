@@ -133,4 +133,3 @@ draft_notebooks
 
 #VS Code settings
 .vscode
-tests/__pycache__/*
