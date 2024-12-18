@@ -128,17 +128,9 @@ class DeMoorPerishable(Problem):
         """Compute next state and reward for forest transition."""
         demand = random_event[self.event_component_lookup["demand"]]
 
-        opening_in_transit = state[
-            self.state_component_lookup[
-                "in_transit_start"
-            ] : self.state_component_lookup["in_transit_stop"]
-        ]
+        opening_in_transit = state[self.state_component_lookup["in_transit"]]
 
-        opening_stock = state[
-            self.state_component_lookup["stock_start"] : self.state_component_lookup[
-                "stock_stop"
-            ]
-        ]
+        opening_stock = state[self.state_component_lookup["stock"]]
 
         in_transit = jnp.hstack([action, opening_in_transit])
 
@@ -178,32 +170,16 @@ class DeMoorPerishable(Problem):
     ################################################################
 
     def _construct_state_component_lookup(self) -> dict[str, int]:
-        """Build dictionary that maps from named state components to index in state."""
-        state_component_idx_dict = {}
+        """Build dictionary that maps from named state components to index or slice"""
 
-        state_component_idx_dict["in_transit_start"] = 0
-        state_component_idx_dict["in_transit_len"] = self.lead_time - 1
-        state_component_idx_dict["in_transit_stop"] = (
-            state_component_idx_dict["in_transit_start"]
-            + state_component_idx_dict["in_transit_len"]
-        )
-
-        state_component_idx_dict["stock_start"] = state_component_idx_dict[
-            "in_transit_stop"
-        ]
-        state_component_idx_dict["stock_len"] = self.max_useful_life
-        state_component_idx_dict["stock_stop"] = (
-            state_component_idx_dict["stock_start"]
-            + state_component_idx_dict["stock_len"]
-        )
-
-        return state_component_idx_dict
+        return {
+            "in_transit": slice(0, self.lead_time - 1),
+            "stock": slice(self.lead_time - 1, self.max_useful_life),
+        }
 
     def _construct_event_component_lookup(self) -> dict[str, int]:
-        """Return a dictionary that maps from part of the random event to its index"""
-        pro_component_idx_dict = {}
-        pro_component_idx_dict["demand"] = 0
-        return pro_component_idx_dict
+        """Return a dictionary that maps name of event component to an index or slice"""
+        return {"demand": 0}
 
     def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
         """Issue stock using FIFO policy"""
