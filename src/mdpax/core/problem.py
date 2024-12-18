@@ -1,7 +1,8 @@
 """Base class for defining MDP problems in a structured way."""
 
+import itertools
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple
+from typing import Tuple
 
 import jax.numpy as jnp
 from jax import vmap
@@ -16,26 +17,69 @@ class Problem(ABC):
     """
 
     def __init__(self):
-        """Initialize problem with empty spaces - constructed when first accessed."""
-        # State space and lookups
-        self._state_space = None
-        self._state_dimension_sizes = None
+        """Initialize problem with all spaces and lookups constructed immediately."""
+        self._state_bounds = self._construct_state_bounds()
+        self._state_dimension_sizes = self._construct_state_dimension_sizes()
+        self._state_space = self._construct_state_space()
+        self._action_space = self._construct_action_space()
+        self._random_event_space = self._construct_random_event_space()
 
-        # Action space and lookups
-        self._action_space = None
+    # State Space Methods
+    @property
+    def state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Min and max values for each state dimension."""
+        return self._state_bounds
 
-        # Random event space and lookups
-        self._random_event_space = None
+    @property
+    def state_space(self) -> jnp.ndarray:
+        """Array of all possible states [n_states, state_dim]."""
+        return self._state_space
+
+    @property
+    def state_dimension_sizes(self) -> tuple[int, ...]:
+        """Size of each dimension computed from bounds."""
+        return self._state_dimension_sizes
+
+    @property
+    def n_states(self) -> int:
+        """Number of states in the problem."""
+        return len(self.state_space)
 
     @abstractmethod
-    def _construct_state_space(self) -> jnp.ndarray:
-        """Construct and return the state space [n_states, state_dim]."""
+    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return (min_values, max_values) for each state dimension."""
         pass
 
-    @abstractmethod
+    def _construct_state_space(self) -> jnp.ndarray:
+        """Construct state space from bounds."""
+        mins, maxs = self.state_bounds
+        ranges = [
+            jnp.arange(min_val, max_val + 1) for min_val, max_val in zip(mins, maxs)
+        ]
+        states = jnp.array(list(itertools.product(*ranges)), dtype=jnp.int32)
+        return states
+
     def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
         """Return maximum size for each state dimension."""
-        pass
+        mins, maxs = self.state_bounds
+        return tuple(jnp.array(maxs - mins + 1, dtype=jnp.int32))
+
+    def state_to_index(self, state: jnp.ndarray) -> int:
+        """Convert state vector to index."""
+        return jnp.ravel_multi_index(
+            tuple(state), self.state_dimension_sizes, mode="wrap"
+        )
+
+    # Action Space Methods
+    @property
+    def action_space(self) -> jnp.ndarray:
+        """Array of all possible actions [n_actions, action_dim]."""
+        return self._action_space
+
+    @property
+    def n_actions(self) -> int:
+        """Number of actions in the problem."""
+        return len(self.action_space)
 
     @abstractmethod
     def _construct_action_space(self) -> jnp.ndarray:
@@ -43,47 +87,15 @@ class Problem(ABC):
         pass
 
     @abstractmethod
-    def _construct_random_event_space(self) -> jnp.ndarray:
-        """Construct and return the random event space [n_events, event_dim]."""
+    def action_components(self) -> list[str]:
+        """Return list of action component names."""
         pass
 
-    @property
-    def state_dimension_sizes(self) -> tuple[int, ...]:
-        """Maximum size for each state dimension."""
-        if self._state_dimension_sizes is None:
-            self._state_dimension_sizes = self._construct_state_dimension_sizes()
-        return self._state_dimension_sizes
-
-    @property
-    def state_space(self) -> jnp.ndarray:
-        """Array of all possible states [n_states, state_dim]."""
-        if self._state_space is None:
-            self._state_space = self._construct_state_space()
-        return self._state_space
-
-    @property
-    def action_space(self) -> jnp.ndarray:
-        """Array of all possible actions [n_actions, action_dim]."""
-        if self._action_space is None:
-            self._action_space = self._construct_action_space()
-        return self._action_space
-
+    # Random Event Methods
     @property
     def random_event_space(self) -> jnp.ndarray:
         """Array of all possible random events [n_events, event_dim]."""
-        if self._random_event_space is None:
-            self._random_event_space = self._construct_random_event_space()
         return self._random_event_space
-
-    @property
-    def n_states(self) -> int:
-        """Number of states in the problem."""
-        return len(self.state_space)
-
-    @property
-    def n_actions(self) -> int:
-        """Number of actions in the problem."""
-        return len(self.action_space)
 
     @property
     def n_random_events(self) -> int:
@@ -91,10 +103,18 @@ class Problem(ABC):
         return len(self.random_event_space)
 
     @abstractmethod
-    def action_components(self) -> Dict[str, int]:
-        """Return list of action component names."""
+    def _construct_random_event_space(self) -> jnp.ndarray:
+        """Construct and return the random event space [n_events, event_dim]."""
         pass
 
+    @abstractmethod
+    def random_event_probability(
+        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
+    ) -> float:
+        """Return probability of a single random event given state-action pair."""
+        pass
+
+    # Core MDP Methods
     @abstractmethod
     def transition(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
@@ -103,37 +123,9 @@ class Problem(ABC):
         pass
 
     @abstractmethod
-    def random_event_probability(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> float:
-        """Return probability of a single random event given state-action pair.
-
-        Parameters
-        ----------
-        state : jnp.ndarray
-            Current state [state_dim]
-        action : jnp.ndarray
-            Selected action [action_dim]
-        random_event : jnp.ndarray
-            Single random event [event_dim]
-
-        Returns
-        -------
-        float
-            Probability of this random event occurring
-        """
-        pass
-
-    @abstractmethod
     def initial_values(self) -> jnp.ndarray:
         """Return initial state values for value-based methods."""
         pass
-
-    def state_to_index(self, state: jnp.ndarray) -> int:
-        """Convert state vector to index."""
-        return jnp.ravel_multi_index(
-            tuple(state), self.state_dimension_sizes, mode="wrap"
-        )
 
     def build_matrices(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Build transition and reward matrices.

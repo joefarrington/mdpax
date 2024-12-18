@@ -35,13 +35,21 @@ class Forest(Problem):
         self.probability_matrix = jnp.array([[1 - self.p, self.p], [1, 0]])
         super().__init__()
 
-    def _construct_state_space(self) -> jnp.ndarray:
-        """States are tree ages from 0 to S-1."""
-        return jnp.array(jnp.arange(self.S), dtype=jnp.int32).reshape(-1, 1)
+    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return min and max values for each state dimension.
 
-    def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
-        """Return maximum size for each state dimension."""
-        return (self.S,)
+        Returns
+        -------
+        tuple[jnp.ndarray, jnp.ndarray]
+            (mins, maxs) where each is shape [n_dims] and n_dims = 1
+        """
+        n_dims = 1
+
+        # Single dimension by [0, S-1]
+        mins = jnp.zeros(n_dims, dtype=jnp.int32)
+        maxs = jnp.full(n_dims, self.S - 1, dtype=jnp.int32)
+
+        return mins, maxs
 
     def _construct_action_space(self) -> jnp.ndarray:
         """Return array of actions [wait=0, cut=1].
@@ -55,6 +63,10 @@ class Forest(Problem):
         """
         return jnp.array([0, 1])
 
+    def action_components(self) -> list[str]:
+        """Return list of action component names."""
+        return ["cut"]  # only one action component, cut when 1
+
     def _construct_random_event_space(self) -> jnp.ndarray:
         """Return array of outcomes [no_fire=0, fire=1].
 
@@ -67,9 +79,20 @@ class Forest(Problem):
         """
         return jnp.array([0, 1])
 
-    def action_components(self) -> list[str]:
-        """Return list of action component names."""
-        return ["cut"]  # only one action component, cut when 1
+    def random_event_probability(
+        self, state: int, action: jnp.ndarray, random_event: jnp.ndarray
+    ) -> jnp.ndarray:
+        """Compute probability of each outcome given state and action.
+
+        When waiting:
+            - No fire probability is 1 - p
+            - Fire probability is p
+
+        When cutting:
+            - No fire probability is 1
+            - Fire probability is 0
+        """
+        return self.probability_matrix[action, random_event]
 
     def transition(
         self, state: int, action: jnp.ndarray, random_event: jnp.ndarray
@@ -97,21 +120,6 @@ class Forest(Problem):
         ).astype(jnp.int32)
 
         return next_state, reward
-
-    def random_event_probability(
-        self, state: int, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> jnp.ndarray:
-        """Compute probability of each outcome given state and action.
-
-        When waiting:
-            - No fire probability is 1 - p
-            - Fire probability is p
-
-        When cutting:
-            - No fire probability is 1
-            - Fire probability is 0
-        """
-        return self.probability_matrix[action, random_event]
 
     def initial_values(self) -> float:
         """Initial value estimate based on immediate cut reward."""

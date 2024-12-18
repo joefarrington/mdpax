@@ -1,6 +1,5 @@
 """Perishable inventory MDP problem from De Moor et al. (2022)."""
 
-import itertools
 from typing import Tuple, Union
 
 import chex
@@ -81,40 +80,25 @@ class DeMoorPerishable(Problem):
         self.state_component_lookup = self._construct_state_component_lookup()
         self.event_component_lookup = self._construct_event_component_lookup()
 
-    def _construct_state_space(self) -> jnp.ndarray:
-        """States are tree ages from 0 to S-1."""
-        possible_orders = range(0, self.max_order_quantity + 1)
-        product_arg = [possible_orders] * (self.max_useful_life + self.lead_time - 1)
-        states = jnp.array(list(itertools.product(*product_arg)))
-        return states
+    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return min and max values for each state dimension.
 
-    def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
-        """Return maximum size for each state dimension."""
-        return tuple(
-            [self.max_order_quantity + 1] * (self.max_useful_life + self.lead_time - 1)
-        )
+        State dimensions are:
+        - First (L-1) dimensions: in-transit orders [0, max_order_quantity]
+        - Next M dimensions: stock at each age [0, max_order_quantity]
 
-    def _construct_state_component_lookup(self) -> dict[str, int]:
-        """Build dictionary that maps from named state components to index in state."""
-        state_component_idx_dict = {}
+        Returns
+        -------
+        tuple[jnp.ndarray, jnp.ndarray]
+            (mins, maxs) where each is shape [n_dims] and n_dims = L-1 + M
+        """
+        n_dims = self.max_useful_life + self.lead_time - 1
 
-        state_component_idx_dict["in_transit_start"] = 0
-        state_component_idx_dict["in_transit_len"] = self.lead_time - 1
-        state_component_idx_dict["in_transit_stop"] = (
-            state_component_idx_dict["in_transit_start"]
-            + state_component_idx_dict["in_transit_len"]
-        )
+        # All dimensions bounded by [0, max_order_quantity]
+        mins = jnp.zeros(n_dims, dtype=jnp.int32)
+        maxs = jnp.full(n_dims, self.max_order_quantity, dtype=jnp.int32)
 
-        state_component_idx_dict["stock_start"] = state_component_idx_dict[
-            "in_transit_stop"
-        ]
-        state_component_idx_dict["stock_len"] = self.max_useful_life
-        state_component_idx_dict["stock_stop"] = (
-            state_component_idx_dict["stock_start"]
-            + state_component_idx_dict["stock_len"]
-        )
-
-        return state_component_idx_dict
+        return mins, maxs
 
     def _construct_action_space(self) -> jnp.ndarray:
         """Return array of actions, order quantities from 0 to max_order_quantity."""
@@ -127,6 +111,16 @@ class DeMoorPerishable(Problem):
     def _construct_random_event_space(self) -> jnp.ndarray:
         """Return array of random events, demand between 0 and max_demand."""
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
+
+    def random_event_probability(
+        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
+    ) -> float:
+        """Compute probability of the random event given state and action.
+
+        Demand is generated from a gamma distribution with mean demand_gamma_mean
+        and CoV demand_gamma_cov.
+        """
+        return self.demand_probabilities[random_event]
 
     def transition(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
@@ -175,29 +169,41 @@ class DeMoorPerishable(Problem):
 
         return next_state, reward
 
-    def random_event_probability(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> float:
-        """Compute probability of the random event given state and action.
-
-        Demand is generated from a gamma distribution with mean demand_gamma_mean
-        and CoV demand_gamma_cov.
-        """
-        return self.demand_probabilities[random_event]
-
     def initial_values(self) -> float:
         """Initial value estimate based on immediate cut reward."""
         return jnp.zeros(self.n_states)
+
+    ################################################################
+    ### Supporting functions for self.transition() ###
+    ################################################################
+
+    def _construct_state_component_lookup(self) -> dict[str, int]:
+        """Build dictionary that maps from named state components to index in state."""
+        state_component_idx_dict = {}
+
+        state_component_idx_dict["in_transit_start"] = 0
+        state_component_idx_dict["in_transit_len"] = self.lead_time - 1
+        state_component_idx_dict["in_transit_stop"] = (
+            state_component_idx_dict["in_transit_start"]
+            + state_component_idx_dict["in_transit_len"]
+        )
+
+        state_component_idx_dict["stock_start"] = state_component_idx_dict[
+            "in_transit_stop"
+        ]
+        state_component_idx_dict["stock_len"] = self.max_useful_life
+        state_component_idx_dict["stock_stop"] = (
+            state_component_idx_dict["stock_start"]
+            + state_component_idx_dict["stock_len"]
+        )
+
+        return state_component_idx_dict
 
     def _construct_event_component_lookup(self) -> dict[str, int]:
         """Return a dictionary that maps from part of the random event to its index"""
         pro_component_idx_dict = {}
         pro_component_idx_dict["demand"] = 0
         return pro_component_idx_dict
-
-    ################################################################
-    ### Supporting functions for self.transition() ###
-    ################################################################
 
     def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
         """Issue stock using FIFO policy"""
