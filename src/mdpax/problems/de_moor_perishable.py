@@ -6,7 +6,6 @@ from typing import Tuple, Union
 import chex
 import jax
 import jax.numpy as jnp
-import numpy as np
 import numpyro
 
 from mdpax.core.problem import Problem
@@ -89,17 +88,11 @@ class DeMoorPerishable(Problem):
         states = jnp.array(list(itertools.product(*product_arg)))
         return states
 
-    def _construct_state_lookup(self) -> jnp.ndarray:
-        """Construct and return an array mapping states to indices."""
-        state_to_idx = np.zeros(
-            (
-                *[self.max_order_quantity + 1]
-                * (self.max_useful_life + self.lead_time - 1),
-            )
+    def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
+        """Return maximum size for each state dimension."""
+        return tuple(
+            [self.max_order_quantity + 1] * (self.max_useful_life + self.lead_time - 1)
         )
-        for idx, state in enumerate(self.state_space):
-            state_to_idx[tuple(state)] = idx
-        return jnp.array(state_to_idx, dtype=jnp.int32)
 
     def _construct_state_component_lookup(self) -> dict[str, int]:
         """Build dictionary that maps from named state components to index in state."""
@@ -184,7 +177,7 @@ class DeMoorPerishable(Problem):
 
     def random_event_probability(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> jnp.ndarray:
+    ) -> float:
         """Compute probability of the random event given state and action.
 
         Demand is generated from a gamma distribution with mean demand_gamma_mean

@@ -19,7 +19,7 @@ class Problem(ABC):
         """Initialize problem with empty spaces - constructed when first accessed."""
         # State space and lookups
         self._state_space = None
-        self.state_to_index = self._construct_state_lookup()
+        self._state_dimension_sizes = None
 
         # Action space and lookups
         self._action_space = None
@@ -33,6 +33,11 @@ class Problem(ABC):
         pass
 
     @abstractmethod
+    def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
+        """Return maximum size for each state dimension."""
+        pass
+
+    @abstractmethod
     def _construct_action_space(self) -> jnp.ndarray:
         """Construct and return the action space [n_actions, action_dim]."""
         pass
@@ -42,10 +47,12 @@ class Problem(ABC):
         """Construct and return the random event space [n_events, event_dim]."""
         pass
 
-    @abstractmethod
-    def _construct_state_lookup(self) -> jnp.ndarray:
-        """Construct and return an array mapping states to indices."""
-        pass
+    @property
+    def state_dimension_sizes(self) -> tuple[int, ...]:
+        """Maximum size for each state dimension."""
+        if self._state_dimension_sizes is None:
+            self._state_dimension_sizes = self._construct_state_dimension_sizes()
+        return self._state_dimension_sizes
 
     @property
     def state_space(self) -> jnp.ndarray:
@@ -121,6 +128,12 @@ class Problem(ABC):
     def initial_values(self) -> jnp.ndarray:
         """Return initial state values for value-based methods."""
         pass
+
+    def state_to_index(self, state: jnp.ndarray) -> int:
+        """Convert state vector to index."""
+        return jnp.ravel_multi_index(
+            tuple(state), self.state_dimension_sizes, mode="wrap"
+        )
 
     def build_matrices(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Build transition and reward matrices.

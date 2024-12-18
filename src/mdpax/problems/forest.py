@@ -39,9 +39,9 @@ class Forest(Problem):
         """States are tree ages from 0 to S-1."""
         return jnp.array(jnp.arange(self.S), dtype=jnp.int32).reshape(-1, 1)
 
-    def _construct_state_lookup(self) -> jnp.ndarray:
-        """Construct mapping from state tuples to indices."""
-        return jnp.arange(self.S, dtype=jnp.int32)
+    def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
+        """Return maximum size for each state dimension."""
+        return (self.S,)
 
     def _construct_action_space(self) -> jnp.ndarray:
         """Return array of actions [wait=0, cut=1].

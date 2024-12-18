@@ -331,7 +331,7 @@ class ValueIterationRunner:
 
     def _get_value_next_state(self, next_state: chex.Array, V_old: chex.Array) -> float:
         """Lookup value of next state in value function from the previous iteration."""
-        return V_old[self.problem.state_to_index[tuple(next_state)]]
+        return V_old[self.problem.state_to_index(next_state)]
 
     def _calculate_updated_state_action_value(
         self,
