@@ -201,9 +201,6 @@ class ValueIterationRunner:
         log.info(f"Devices: {jax.devices()}")
 
         # Vmap and/or JIT methods
-        self.random_event_probability_vmap_random_events = jax.vmap(
-            self.problem.random_event_probability, in_axes=[None, None, 0]
-        )
         self._transition_vmap_random_events = jax.vmap(
             self.problem.transition, in_axes=[None, None, 0]
         )
@@ -352,9 +349,7 @@ class ValueIterationRunner:
         next_state_values = self._get_value_next_state_vmap_next_states(
             next_states, V_old
         )
-        probs = self.random_event_probability_vmap_random_events(
-            state, action, random_event_space
-        )
+        probs = self.problem.random_event_probabilities(state, action)
         new_state_action_value = (
             single_step_rewards + self.gamma * next_state_values
         ).dot(probs)

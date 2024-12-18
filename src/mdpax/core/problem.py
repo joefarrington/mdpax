@@ -108,10 +108,10 @@ class Problem(ABC):
         pass
 
     @abstractmethod
-    def random_event_probability(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
+    def random_event_probabilities(
+        self, state: jnp.ndarray, action: jnp.ndarray
     ) -> float:
-        """Return probability of a single random event given state-action pair."""
+        """Return probabilities of each random events given state-action pair."""
         pass
 
     # Core MDP Methods
@@ -128,17 +128,7 @@ class Problem(ABC):
         pass
 
     def build_matrices(self) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Build transition and reward matrices.
-
-        Returns
-        -------
-        P : jnp.ndarray
-            Transition matrices, shape [A, S, S].
-            P[a,s,s'] is probability of going from s to s' under action a.
-        R : jnp.ndarray
-            Reward matrix, shape [S, A].
-            R[s,a] is reward for taking action a in state s.
-        """
+        """Build transition and reward matrices."""
         states = self.state_space  # [S, state_dim]
         actions = self.action_space
         random_events = self.random_event_space
@@ -156,22 +146,19 @@ class Problem(ABC):
             in_axes=(0, None, None),  # States
         )
 
-        # Vectorize probability over all dimensions [S, A, E]
+        # Vectorize probability over states and actions [S, A]
         v_probability = vmap(
             vmap(
-                vmap(
-                    self.random_event_probability,
-                    in_axes=(None, None, 0),  # Random events
-                ),
-                in_axes=(None, 0, None),  # Actions
+                self.random_event_probabilities,
+                in_axes=(None, 0),  # Actions
             ),
-            in_axes=(0, None, None),  # States
+            in_axes=(0, None),  # States
         )
 
         # Get all transitions and probabilities at once
         next_states_rewards = v_transition(states, actions, random_events)  # [S, A, E]
         next_states, rewards = next_states_rewards  # Unpack tuple
-        probs = v_probability(states, actions, random_events)  # [S, A, E]
+        probs = v_probability(states, actions)  # [S, A, E]
 
         # Convert all next states to indices
         ns_indices = vmap(

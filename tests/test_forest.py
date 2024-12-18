@@ -65,16 +65,16 @@ def test_forest_properties():
     forest = Forest()
 
     # Test dimensions
-    assert len(forest.get_states()) == forest.S
-    assert len(forest.get_actions()) == 2  # wait, cut
-    assert len(forest.get_random_outcomes()) == 2  # no fire, fire
+    assert forest.n_states == forest.S
+    assert forest.n_actions == 2  # wait, cut
+    assert forest.n_random_events == 2  # no fire, fire
 
     # Test state indexing
     for i in range(forest.S):
-        assert forest.get_state_index(jnp.array([i])) == i
+        assert forest.state_to_index(jnp.array([i])) == i
 
     # Test initial values
-    initial_values = forest.initial_value()
+    initial_values = forest.initial_values()
     assert initial_values.shape == (forest.S,)
     assert np.all(initial_values == 0)
 
@@ -84,40 +84,38 @@ def test_forest_transitions():
     forest = Forest(S=3, r1=4.0, r2=2.0, p=0.1)
 
     # Test cutting a mature tree
-    next_state, reward = forest.deterministic_transition(
+    next_state, reward = forest.transition(
         state=jnp.array([2]),  # Mature tree
-        action=forest.ACTIONS[1],  # Cut
-        outcome=forest.OUTCOMES[0],  # No fire (shouldn't matter)
+        action=forest.action_space[1],  # Cut
+        random_event=forest.random_event_space[0],  # No fire (shouldn't matter)
     )
     assert reward == 2.0  # r2 for mature
     assert next_state == 0  # Reset to young
 
     # Test waiting with no fire
-    next_state, reward = forest.deterministic_transition(
+    next_state, reward = forest.transition(
         state=jnp.array([1]),  # Middle age
-        action=forest.ACTIONS[0],  # Wait
-        outcome=forest.OUTCOMES[0],  # No fire
+        action=forest.action_space[0],  # Wait
+        random_event=forest.random_event_space[0],  # No fire
     )
     assert reward == 0.0  # No reward for waiting
     assert next_state == 2  # Age increases
 
 
 def test_forest_probabilities():
-    """Test outcome probabilities."""
+    """Test random_event probabilities."""
     forest = Forest(S=3, p=0.1)
 
     # Test waiting action
-    probs = forest.get_outcome_probabilities(
+    probs = forest.random_event_probabilities(
         state=1,
-        action=forest.ACTIONS[0],  # Wait
-        possible_random_outcomes=forest.OUTCOMES,
+        action=forest.action_space[0],  # Wait
     )
     assert np.allclose(probs, [0.9, 0.1])  # [no_fire, fire]
 
     # Test cutting action
-    probs = forest.get_outcome_probabilities(
+    probs = forest.random_event_probabilities(
         state=1,
-        action=forest.ACTIONS[1],  # Cut
-        possible_random_outcomes=forest.OUTCOMES,
+        action=forest.action_space[1],  # Cut
     )
     assert np.allclose(probs, [1.0, 0.0])  # Always succeeds

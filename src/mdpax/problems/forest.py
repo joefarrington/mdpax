@@ -79,8 +79,8 @@ class Forest(Problem):
         """
         return jnp.array([0, 1])
 
-    def random_event_probability(
-        self, state: int, action: jnp.ndarray, random_event: jnp.ndarray
+    def random_event_probabilities(
+        self, state: int, action: jnp.ndarray
     ) -> jnp.ndarray:
         """Compute probability of each outcome given state and action.
 
@@ -92,7 +92,7 @@ class Forest(Problem):
             - No fire probability is 1
             - Fire probability is 0
         """
-        return self.probability_matrix[action, random_event]
+        return self.probability_matrix[action]
 
     def transition(
         self, state: int, action: jnp.ndarray, random_event: jnp.ndarray

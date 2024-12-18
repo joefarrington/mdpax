@@ -11,7 +11,7 @@ from mdpax.core.problem import Problem
 
 
 class DeMoorPerishable(Problem):
-    """Class to run value iteration for de_moor_perishable scenario
+    """Class for de_moor_perishable scenario
 
     Args:
         max_demand: maximum daily demand
@@ -112,15 +112,15 @@ class DeMoorPerishable(Problem):
         """Return array of random events, demand between 0 and max_demand."""
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
-    def random_event_probability(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
+    def random_event_probabilities(
+        self, state: jnp.ndarray, action: jnp.ndarray
     ) -> float:
         """Compute probability of the random event given state and action.
 
         Demand is generated from a gamma distribution with mean demand_gamma_mean
-        and CoV demand_gamma_cov.
+        and CoV demand_gamma_cov and is independent of the state and action.
         """
-        return self.demand_probabilities[random_event]
+        return self.demand_probabilities
 
     def transition(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
