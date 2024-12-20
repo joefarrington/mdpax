@@ -35,6 +35,11 @@ class Forest(Problem):
         self.probability_matrix = jnp.array([[1 - self.p, self.p], [1, 0]])
         super().__init__()
 
+    @property
+    def name(self) -> str:
+        """Name of the problem."""
+        return "forest"
+
     def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return min and max values for each state dimension.
 

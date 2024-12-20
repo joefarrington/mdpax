@@ -80,6 +80,11 @@ class DeMoorPerishable(Problem):
         self.state_component_lookup = self._construct_state_component_lookup()
         self.event_component_lookup = self._construct_event_component_lookup()
 
+    @property
+    def name(self) -> str:
+        """Name of the problem."""
+        return "de_moor_perishable"
+
     def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return min and max values for each state dimension.
 

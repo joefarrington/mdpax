@@ -46,6 +46,12 @@ class Problem(ABC):
         """Number of states in the problem."""
         return len(self.state_space)
 
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Name of the problem."""
+        pass
+
     @abstractmethod
     def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return (min_values, max_values) for each state dimension."""

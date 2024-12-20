@@ -74,6 +74,11 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         self.pu = self._calculate_pu()
         self.pz = self._calculate_pz()
 
+    @property
+    def name(self) -> str:
+        """Name of the problem."""
+        return "hendrix_perishable_substitution_two_product"
+
     def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return min and max values for each state dimension.
 

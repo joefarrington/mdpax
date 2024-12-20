@@ -1,15 +1,17 @@
 """Value iteration solver with efficient parallel processing and batching."""
 
-from typing import Tuple
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 
 from mdpax.core.problem import Problem
 from mdpax.core.solver import Solver
+from mdpax.utils.checkpointing import CheckpointMixin
 
 
-class ValueIteration(Solver):
+class ValueIteration(Solver, CheckpointMixin):
     """Value iteration solver using parallel processing.
 
     This solver implements parallel value iteration with the following features:
@@ -36,6 +38,10 @@ class ValueIteration(Solver):
         max_iter: int = 1000,
         epsilon: float = 0.01,
         batch_size: int = 1024,
+        checkpoint_dir: Optional[Union[str, Path]] = None,
+        checkpoint_frequency: int = 0,
+        max_checkpoints: int = 1,
+        enable_async_checkpointing: bool = False,
     ):
         """Initialize the solver.
 
@@ -45,6 +51,13 @@ class ValueIteration(Solver):
             max_iter: Maximum iterations (positive integer)
             epsilon: Convergence threshold (positive float)
             batch_size: Size of state batches (positive integer)
+            checkpoint_dir: Directory to save checkpoints (optional)
+            checkpoint_frequency: Frequency of checkpoints
+                (positive integer, 0 to disable)
+            max_checkpoints: Maximum number of checkpoints to keep (positive integer)
+            cleanup_on_completion: Whether to cleanup checkpoints on completion (bool)
+            enable_async_checkpointing: Whether to enable asynchronous
+                checkpointing (bool)
 
         Raises:
             TypeError: If problem is not a Problem instance
@@ -54,6 +67,12 @@ class ValueIteration(Solver):
             raise TypeError("problem must be an instance of Problem")
 
         super().__init__(problem, gamma, max_iter, epsilon, batch_size)
+        self.setup_checkpointing(
+            checkpoint_dir,
+            checkpoint_frequency,
+            max_checkpoints=max_checkpoints,
+            enable_async=enable_async_checkpointing,
+        )
         self.policy = None
 
     def _setup(self) -> None:
@@ -194,13 +213,18 @@ class ValueIteration(Solver):
             # Perform iteration step
             new_values, conv = self._iteration_step()
 
+            # Update values and iteration count
+            self.values = new_values
+            self.iteration += 1
+
             # Check convergence
             if conv < self.epsilon:
                 break
 
-            # Update values and iteration count
-            self.values = new_values
-            self.iteration += 1
+            # Save checkpoint if enabled
+            if self.is_checkpointing_enabled:
+                self.save_checkpoint(self.iteration)
+
             # Extract policy if converged or on final iteration
         if self.n_devices > 1:
             # Multi-device policy extraction
@@ -225,3 +249,31 @@ class ValueIteration(Solver):
         self.policy = jnp.take(self.problem.action_space, self.policy, axis=0)
 
         return self.values, self.policy
+
+    def _get_checkpoint_state(self) -> dict:
+        """Get solver state for checkpointing.
+
+        Returns:
+            dict containing all necessary state to resume solving:
+            - values: Current value function
+            - policy: Current policy (if exists)
+            - iteration: Current iteration count
+        """
+        cp_state = {
+            "values": self.values,
+            "iteration": self.iteration,
+        }
+        if self.policy is not None:
+            cp_state["policy"] = self.policy
+        return cp_state
+
+    def _restore_from_checkpoint(self, cp_state: dict) -> None:
+        """Restore solver state from checkpoint.
+
+        Args:
+            cp_state: State dict from get_checkpoint_state()
+        """
+        self.values = cp_state["values"]
+        self.iteration = cp_state["iteration"]
+        if "policy" in cp_state:
+            self.policy = cp_state["policy"]

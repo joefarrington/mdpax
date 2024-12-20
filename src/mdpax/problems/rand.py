@@ -37,6 +37,11 @@ class RandDense(Problem):
 
         super().__init__()
 
+    @property
+    def name(self) -> str:
+        """Name of the problem."""
+        return "rand"
+
     def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """States are just indices from 0 to states-1."""
         return (
