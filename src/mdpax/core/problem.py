@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 
 import jax.numpy as jnp
+import numpy as np
 from jax import vmap
 
 
@@ -54,10 +55,11 @@ class Problem(ABC):
         """Construct state space from bounds."""
         mins, maxs = self.state_bounds
         ranges = [
-            jnp.arange(min_val, max_val + 1) for min_val, max_val in zip(mins, maxs)
+            np.arange(min_val, max_val + 1) for min_val, max_val in zip(mins, maxs)
         ]
-        states = jnp.array(list(itertools.product(*ranges)), dtype=jnp.int32)
-        return states
+        # More efficient to convert to numpy array first
+        states = np.array(list(itertools.product(*ranges)), dtype=jnp.int32)
+        return jnp.array(states)
 
     def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
         """Return maximum size for each state dimension."""
