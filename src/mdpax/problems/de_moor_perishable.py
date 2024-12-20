@@ -39,7 +39,7 @@ class DeMoorPerishable(Problem):
         shortage_cost: float = 5.0,
         wastage_cost: float = 7.0,
         holding_cost: float = 1.0,
-        issue_policy: str = "fifo",
+        issue_policy: str = "lifo",
     ):
 
         assert (
