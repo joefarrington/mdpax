@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from mdpax.problems.de_moor_perishable import DeMoorPerishable
-from mdpax.solvers.value_iteration import ValueIterationRunner
+from mdpax.solvers.value_iteration import ValueIteration
 
 
 # Compare policy output by DeMoorPerishableVIR with policies
@@ -35,17 +35,19 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = DeMoorPerishable(issue_policy=issuing_policy)
-        vi_runner = ValueIterationRunner(
-            problem, max_batch_size=150, gamma=0.99, epsilon=1e-5
-        )
-        vi_output = vi_runner.run_value_iteration(max_iter=10000)
+        vi_runner = ValueIteration(problem, gamma=0.99, max_iter=5000, epsilon=1e-5)
+        _, policy = vi_runner.solve()
 
+        vi_policy = pd.DataFrame(policy)
         # Post-process policy to match reported form
         # Including clipping so that only includes stock-holding up to 8 units per agre
-        vi_policy = vi_output["policy"].reset_index()
-        vi_policy.columns = ["state", "order_quantity"]
-        vi_policy["Units in stock age 2"] = [(x)[1] for x in vi_policy["state"]]
-        vi_policy["Units in stock age 1"] = [(x)[0] for x in vi_policy["state"]]
+        vi_policy.columns = ["order_quantity"]
+        vi_policy["Units in stock age 2"] = [
+            int(x[1]) for x in np.array(problem.state_space)
+        ]
+        vi_policy["Units in stock age 1"] = [
+            int(x[0]) for x in np.array(problem.state_space)
+        ]
         vi_policy = vi_policy.pivot(
             index="Units in stock age 1",
             columns="Units in stock age 2",

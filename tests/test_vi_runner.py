@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from mdpax.problems.forest import Forest
-from mdpax.solvers.value_iteration import ValueIterationRunner
+from mdpax.solvers.value_iteration import ValueIteration
 
 
 def test_vi_runner_matches_original():
@@ -27,14 +27,13 @@ def test_vi_runner_matches_original():
 
     # Run our value iteration
     forest = Forest(S=S, r1=r1, r2=r2, p=p)
-    vi_runner = ValueIterationRunner(
+    vi_runner = ValueIteration(
         problem=forest,
-        max_batch_size=32,  # Small problem, so small batch size is fine
+        batch_size=32,  # Small problem, so small batch size is fine
         epsilon=epsilon,
         gamma=gamma,
     )
-    results = vi_runner.run_value_iteration()
-    print(results["output_info"])
+    _, policy = vi_runner.solve()
 
     # Compare value functions
     # np.testing.assert_allclose(
@@ -75,8 +74,8 @@ def test_vi_runner_different_parameters(params):
 
     # Run our value iteration
     forest = Forest(**mdp_params)
-    vi_runner = ValueIterationRunner(problem=forest, max_batch_size=32, **vi_params)
-    _ = vi_runner.run_value_iteration()
+    vi_runner = ValueIteration(problem=forest, batch_size=32, **vi_params)
+    _, policy = vi_runner.solve()
 
     # Compare value functions
     # np.testing.assert_allclose(
@@ -108,10 +107,10 @@ def test_vi_runner_convergence():
 
     # Our implementation
     forest = Forest(S=S, r1=r1, r2=r2, p=p)
-    vi_runner = ValueIterationRunner(
-        problem=forest, max_batch_size=32, epsilon=epsilon, gamma=gamma
+    vi_runner = ValueIteration(
+        problem=forest, batch_size=32, epsilon=epsilon, gamma=gamma
     )
-    _ = vi_runner.run_value_iteration()
+    _, _ = vi_runner.solve()
 
     # Check iterations are similar
     print(vi_orig.iter)
@@ -125,15 +124,15 @@ def test_vi_runner_performance():
     S = 1000
     forest = Forest(S=S, r1=4.0, r2=2.0, p=0.1)
 
-    vi_runner = ValueIterationRunner(
-        problem=forest, max_batch_size=128, epsilon=0.01, gamma=0.95
+    vi_runner = ValueIteration(
+        problem=forest, batch_size=128, epsilon=0.01, gamma=0.95, max_iter=100
     )
 
     # Should complete in reasonable time
-    results = vi_runner.run_value_iteration(max_iter=100)
+    _, _ = vi_runner.solve()
 
     # Basic sanity checks
-    assert results["V"].shape == (S, 1)
-    assert results["policy"].shape == (S, 1)
-    assert np.all(results["policy"].values >= 0)
-    assert np.all(results["policy"].values <= 1)
+    assert vi_runner.values.shape == (S, 1)
+    assert vi_runner.policy.shape == (S, 1)
+    assert np.all(vi_runner.policy.values >= 0)
+    assert np.all(vi_runner.policy.values <= 1)
