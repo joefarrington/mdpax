@@ -41,7 +41,7 @@ class CheckpointMixin(ABC):
         checkpoint_frequency: int,
         *,  # Force keyword arguments for optional parameters
         max_checkpoints: int = 1,
-        enable_async: bool = False,
+        enable_async: bool = True,
     ) -> None:
         """Set up checkpointing infrastructure."""
         # Validation
@@ -138,9 +138,11 @@ class CheckpointMixin(ABC):
                         step, args=checkpoint.args.StandardSave(cp_state)
                     )
                     status = "queued" if self.enable_async else "saved"
-                    logger.info(f"Checkpoint {status} for step {step}")
+                    logger.info(f"Checkpoint {status} for iteration {step}")
                 except Exception as e:
-                    logger.error(f"Failed to save checkpoint at step {step}: {str(e)}")
+                    logger.error(
+                        f"Failed to save checkpoint at iteration {step}: {str(e)}"
+                    )
 
     def restore_latest_checkpoint(
         self, checkpoint_dir: Optional[Union[str, Path]] = None

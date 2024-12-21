@@ -37,12 +37,12 @@ class ValueIteration(Solver, CheckpointMixin):
         problem: Problem,
         gamma: float = 0.99,
         max_iter: int = 1000,
-        epsilon: float = 0.01,
+        epsilon: float = 1e-3,
         batch_size: int = 1024,
         checkpoint_dir: Optional[Union[str, Path]] = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
-        enable_async_checkpointing: bool = False,
+        enable_async_checkpointing: bool = True,
     ):
         """Initialize the solver.
 
@@ -56,7 +56,6 @@ class ValueIteration(Solver, CheckpointMixin):
             checkpoint_frequency: Frequency of checkpoints
                 (positive integer, 0 to disable)
             max_checkpoints: Maximum number of checkpoints to keep (positive integer)
-            cleanup_on_completion: Whether to cleanup checkpoints on completion (bool)
             enable_async_checkpointing: Whether to enable asynchronous
                 checkpointing (bool)
 
@@ -64,8 +63,6 @@ class ValueIteration(Solver, CheckpointMixin):
             TypeError: If problem is not a Problem instance
             ValueError: If parameters are out of valid ranges
         """
-        if not isinstance(problem, Problem):
-            raise TypeError("problem must be an instance of Problem")
 
         super().__init__(problem, gamma, max_iter, epsilon, batch_size)
         self.setup_checkpointing(
@@ -113,12 +110,9 @@ class ValueIteration(Solver, CheckpointMixin):
             probs = self.problem.random_event_probabilities(state, action)
 
             # Compute next states and rewards for all possible random events
-            transitions = jax.vmap(lambda e: self.problem.transition(state, action, e))(
-                self.problem.random_event_space
-            )
-
-            # Unpack next states and rewards
-            next_states, rewards = jax.tree.map(lambda x: jnp.array(x), transitions)
+            next_states, rewards = jax.vmap(
+                lambda e: self.problem.transition(state, action, e)
+            )(self.problem.random_event_space)
 
             # Convert next states to indices for value lookup
             next_state_indices = jax.vmap(self.problem.state_to_index)(next_states)
@@ -151,7 +145,6 @@ class ValueIteration(Solver, CheckpointMixin):
         """Extract policy for a batch of states."""
         # Compute state-action values
         state_action_values = self._compute_state_action_values(states, values)
-
         # Select best actions
         return jnp.argmax(state_action_values, axis=1)
 
@@ -194,14 +187,11 @@ class ValueIteration(Solver, CheckpointMixin):
         )
         # Combine results from all devices
         new_values = jnp.reshape(device_values, (-1,))
-
         # Remove padding if needed
         if self.n_pad > 0:
             new_values = new_values[: -self.n_pad]
-
         # Compute convergence measure
         conv = jnp.max(jnp.abs(new_values - self.values))
-
         return new_values, conv
 
     def solve(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -217,9 +207,11 @@ class ValueIteration(Solver, CheckpointMixin):
             # Update values and iteration count
             self.values = new_values
             self.iteration += 1
-            logger.info(
-                f"Iteration {self.iteration} completed, maximum delta: {conv:.4f}"
-            )
+            logger.info(f"Iteration {self.iteration} maximum delta: {conv:.4f}")
+
+            # Save checkpoint if enabled
+            if self.is_checkpointing_enabled:
+                self.save_checkpoint(self.iteration)
 
             # Check convergence
             if conv < self.epsilon:
@@ -228,19 +220,23 @@ class ValueIteration(Solver, CheckpointMixin):
                 )
                 break
 
-            # Save checkpoint if enabled
-            if self.is_checkpointing_enabled:
-                self.save_checkpoint(self.iteration)
-
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
 
         # Extract policy if converged or on final iteration
         logger.info("Extracting policy")
+        self.policy = self._extract_policy(self.values)
+        logger.info("Policy extracted")
+
+        logger.info("Value iteration completed")
+        return self.values, self.policy
+
+    def _extract_policy(self, values: jnp.ndarray) -> jnp.ndarray:
+        """Extract policy from values."""
         if self.n_devices > 1:
             # Multi-device policy extraction
             device_policies = self._extract_batch_policy_pmap(
-                self.batched_states, new_values
+                self.batched_states, values
             )
             # Combine results from all devices
             self.policy = jnp.reshape(device_policies, (-1,))
@@ -248,7 +244,7 @@ class ValueIteration(Solver, CheckpointMixin):
             # Single device policy extraction
             policy_batches = []
             for batch in self.batched_states:
-                policy_batch = self._extract_batch_policy(batch, new_values)
+                policy_batch = self._extract_batch_policy(batch, values)
                 policy_batches.append(policy_batch)
             self.policy = jnp.concatenate(policy_batches)
 
@@ -258,10 +254,7 @@ class ValueIteration(Solver, CheckpointMixin):
 
         # Look up actual actions from policy
         self.policy = jnp.take(self.problem.action_space, self.policy, axis=0)
-        logger.info("Policy extracted")
-
-        logger.info("Value iteration completed")
-        return self.values, self.policy
+        return self.policy
 
     def _get_checkpoint_state(self) -> dict:
         """Get solver state for checkpointing.

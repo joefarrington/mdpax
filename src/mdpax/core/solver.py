@@ -42,9 +42,11 @@ class Solver(ABC):
         problem: Problem,
         gamma: float = 0.9,
         max_iter: int = 1000,
-        epsilon: float = 0.01,
+        epsilon: float = 1e-3,
         batch_size: int = 1024,
     ):
+        if not isinstance(problem, Problem):
+            raise TypeError("problem must be an instance of Problem")
         assert 0 <= gamma <= 1, "Discount factor must be in [0,1]"
         assert max_iter > 0, "Max iterations must be positive"
         assert epsilon > 0, "Epsilon must be positive"
@@ -58,7 +60,7 @@ class Solver(ABC):
         logger.info(f"Solver initialized with {problem.name} problem")
         logger.info(f"Number of states: {problem.n_states}")
         logger.info(f"Number of actions: {problem.n_actions}")
-        logger.info(f"Number of random_events: {problem.n_random_events}")
+        logger.info(f"Number of random events: {problem.n_random_events}")
 
         # Setup device information
         self.n_devices = len(jax.devices())
