@@ -5,6 +5,7 @@ from typing import Optional, Tuple, Union
 
 import jax
 import jax.numpy as jnp
+from loguru import logger
 
 from mdpax.core.problem import Problem
 from mdpax.core.solver import Solver
@@ -216,16 +217,26 @@ class ValueIteration(Solver, CheckpointMixin):
             # Update values and iteration count
             self.values = new_values
             self.iteration += 1
+            logger.info(
+                f"Iteration {self.iteration} completed, maximum delta: {conv:.4f}"
+            )
 
             # Check convergence
             if conv < self.epsilon:
+                logger.info(
+                    f"Convergence threshold reached at iteration {self.iteration}"
+                )
                 break
 
             # Save checkpoint if enabled
             if self.is_checkpointing_enabled:
                 self.save_checkpoint(self.iteration)
 
-            # Extract policy if converged or on final iteration
+        if conv >= self.epsilon:
+            logger.info("Maximum iterations reached")
+
+        # Extract policy if converged or on final iteration
+        logger.info("Extracting policy")
         if self.n_devices > 1:
             # Multi-device policy extraction
             device_policies = self._extract_batch_policy_pmap(
@@ -247,7 +258,9 @@ class ValueIteration(Solver, CheckpointMixin):
 
         # Look up actual actions from policy
         self.policy = jnp.take(self.problem.action_space, self.policy, axis=0)
+        logger.info("Policy extracted")
 
+        logger.info("Value iteration completed")
         return self.values, self.policy
 
     def _get_checkpoint_state(self) -> dict:

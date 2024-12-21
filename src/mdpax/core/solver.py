@@ -5,6 +5,7 @@ from typing import Tuple
 
 import jax
 import jax.numpy as jnp
+from loguru import logger
 
 from mdpax.core.problem import Problem
 
@@ -54,6 +55,11 @@ class Solver(ABC):
         self.max_iter = max_iter
         self.epsilon = epsilon
 
+        logger.info(f"Solver initialized with {problem.name} problem")
+        logger.info(f"Number of states: {problem.n_states}")
+        logger.info(f"Number of actions: {problem.n_actions}")
+        logger.info(f"Number of random_events: {problem.n_random_events}")
+
         # Setup device information
         self.n_devices = len(jax.devices())
 
@@ -68,6 +74,7 @@ class Solver(ABC):
                 batch_size,  # user provided/default max
                 max(64, states_per_device),  # ensure minimum batch size
             )
+        logger.info(f"Number of devices: {self.n_devices}")
 
         # Initialize values and policy
         self.values = problem.initial_values()
