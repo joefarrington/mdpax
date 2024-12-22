@@ -44,6 +44,7 @@ class Solver(ABC):
         max_iter: int = 1000,
         epsilon: float = 1e-3,
         batch_size: int = 1024,
+        jax_double_precision: bool = True,
     ):
         if not isinstance(problem, Problem):
             raise TypeError("problem must be an instance of Problem")
@@ -51,6 +52,9 @@ class Solver(ABC):
         assert max_iter > 0, "Max iterations must be positive"
         assert epsilon > 0, "Epsilon must be positive"
         assert batch_size > 0, "Batch size must be positive"
+
+        if jax_double_precision:
+            jax.config.update("jax_enable_x64", True)
 
         self.problem = problem
         self.gamma = gamma
@@ -78,19 +82,78 @@ class Solver(ABC):
             )
         logger.info(f"Number of devices: {self.n_devices}")
 
-        # Initialize values and policy
-        self.values = problem.initial_values()
+        # Initialize solver state
+        self.values = None
         self.policy = None
         self.iteration = 0
 
         # Setup processing based on problem size and devices
         self._setup_processing()
 
-        # Setup solver-specific structures
+        # Setup solver-specific structures and JIT compile functions
         self._setup()
 
-    @abstractmethod
+        # Initialize values using solver-specific method
+        self.values = self._initialize_values()
+
     def _setup(self) -> None:
+        """Setup solver computations and JIT compile functions."""
+        # JIT compile initial value computation for single device
+        self._compute_initial_values = jax.jit(jax.vmap(self.problem.initial_value))
+
+        # Setup multi-device initial value computation
+        if self.n_devices > 1:
+            self._compute_initial_values_pmap = jax.pmap(
+                lambda x: jax.vmap(self.problem.initial_value)(x),
+                in_axes=(0,),  # batched_states
+                axis_name="device",
+            )
+            # Setup scan for initialization
+            self._scan_initial_values = jax.pmap(
+                lambda states: jax.vmap(self.problem.initial_value)(states),
+                in_axes=(0,),  # batched_states
+                axis_name="device",
+            )
+        else:
+            # Setup scan for single device
+            batch_fn = self._compute_initial_values
+
+            def scan_fn(_, batch):
+                return (None, batch_fn(batch))
+
+            self._scan_initial_values = jax.jit(
+                lambda states: jax.lax.scan(scan_fn, None, states)[1]
+            )
+
+        # Setup other solver-specific computations
+        self._setup_solver()
+
+    def _initialize_values(self) -> jnp.ndarray:
+        """Initialize value function using problem's initial value function.
+
+        Uses the same batching and multi-device infrastructure as value updates
+        to efficiently compute initial values for all states.
+
+        Returns:
+            Array of initial values for all states [n_states]
+        """
+        if self.n_devices > 1:
+            # Multi-device initialization using scan
+            device_values = self._scan_initial_values(self.batched_states)
+            values = jnp.reshape(device_values, (-1,))
+        else:
+            # Single device initialization using scan
+            values = self._scan_initial_values(self.batched_states)
+            values = jnp.reshape(values, (-1,))
+
+        # Remove padding if needed
+        if self.n_pad > 0:
+            values = values[: -self.n_pad]
+
+        return values
+
+    @abstractmethod
+    def _setup_solver(self) -> None:
         """Setup solver-specific data structures and functions."""
         pass
 

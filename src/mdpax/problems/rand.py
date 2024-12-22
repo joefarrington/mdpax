@@ -75,9 +75,9 @@ class RandDense(Problem):
         reward = self.R[action, state, next_state]
         return jnp.array([next_state]), reward
 
-    def initial_values(self) -> jnp.ndarray:
+    def initial_value(self, state: jnp.ndarray) -> float:
         """Start with zeros."""
-        return jnp.zeros(self.states)
+        return 0.0
 
     def _generate_matrices(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Generate random P and R matrices."""

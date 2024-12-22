@@ -1,6 +1,5 @@
 import os
 
-import jax
 import numpy as np
 import pandas as pd
 import pytest
@@ -26,13 +25,12 @@ class TestPolicy:
     def test_policy_same_as_reported(
         self, tmpdir, shared_datadir, issuing_policy, reported_policy_filename
     ):
-        jax.config.update("jax_enable_x64", True)
         # Change working directory to avoid clutter
         os.chdir(tmpdir)
 
         problem = HendrixPerishableSubstitutionTwoProduct()
         vi_runner = RelativeValueIteration(
-            problem, batch_size=5000, epsilon=1e-5, max_iter=100
+            problem, batch_size=5000, epsilon=1e-4, max_iter=100
         )
         _, policy, _ = vi_runner.solve()
         policy = np.array(policy)

@@ -1,6 +1,5 @@
 import os
 
-import jax
 import numpy as np
 import pandas as pd
 import pytest
@@ -23,7 +22,6 @@ class TestPolicy:
     def test_policy_same_as_reported(
         self, tmpdir, shared_datadir, reported_policy_filename
     ):
-        jax.config.update("jax_enable_x64", True)
         # Change working directory to avoid clutter
         os.chdir(tmpdir)
 

@@ -207,11 +207,9 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
             single_step_reward,
         )
 
-    def initial_values(self) -> float:
-        """Initial value estimate based on immediate cut reward."""
-        # TODO: In the original this was one step ahead sales revenue
-        # but for now lets just start with zero and then update later
-        return jnp.zeros(self.n_states)
+    def initial_value(self, state: jnp.ndarray) -> float:
+        """Initial value estimate based on one-step ahead expected sales revenue"""
+        return self._calculate_expected_sales_revenue(state)
 
     ##################################################
     ### Supporting functions for self.transition() ###
@@ -397,36 +395,17 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         return issued_probs
 
     ##################################################################
-    ### Support functions for self._calculate_single_step_reward() ###
+    ### Support functions for self.initial_value() ###
     ##################################################################
 
     def _calculate_sales_revenue_for_possible_random_outcomes(self) -> chex.Array:
         """Calculate the sales revenue for each possible random outcome of demand"""
-        return (self.possible_random_outcomes.dot(self.sales_prices)).reshape(-1)
+        return (self.random_event_space.dot(self.sales_prices)).reshape(-1)
 
     def _calculate_expected_sales_revenue(self, state: chex.Array) -> float:
         """Calculate the expected sales revenue for a given state"""
-        issued_probabilities = self.get_probabilities(state, None, None)
+        issued_probabilities = self.random_event_probabilities(state, 0)
         expected_sales_revenue = issued_probabilities.dot(
             self._calculate_sales_revenue_for_possible_random_outcomes()
         )
         return expected_sales_revenue
-
-    def _calculate_expected_sales_revenue_state_batch(
-        self, carry: None, batch_of_states: chex.Array
-    ) -> Tuple[None, chex.Array]:
-        """Calculate the expected sales revenue for a batch of states"""
-        revenue = self._calculate_expected_sales_revenue_vmap_states(batch_of_states)
-        return carry, revenue
-
-    def _calculate_expected_sales_revenue_scan_state_batches(
-        self, carry: None, padded_batched_states: chex.Array
-    ) -> chex.Array:
-        """Calculate the expected sales revenue for multiple batches of states,
-        using jax.lax.scan to loop over the batches of states"""
-        carry, revenue_padded = jax.lax.scan(
-            self._calculate_expected_sales_revenue_state_batch_jit,
-            carry,
-            padded_batched_states,
-        )
-        return revenue_padded

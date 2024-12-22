@@ -28,6 +28,7 @@ class RelativeValueIteration(ValueIteration):
         max_iter: int = 1000,
         epsilon: float = 1e-3,
         batch_size: int = 1024,
+        jax_double_precision: bool = True,
         checkpoint_dir: Optional[Union[str, Path]] = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
@@ -44,13 +45,13 @@ class RelativeValueIteration(ValueIteration):
             max_iter=max_iter,
             epsilon=epsilon,
             batch_size=batch_size,
+            jax_double_precision=jax_double_precision,
             checkpoint_dir=checkpoint_dir,
             checkpoint_frequency=checkpoint_frequency,
             max_checkpoints=max_checkpoints,
             enable_async_checkpointing=enable_async_checkpointing,
         )
         self.gain = 0.0  # Initialize gain term for average reward
-        logger.info("Relative value iteration solver initialized")
 
     def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
         """Run one iteration and compute span for convergence.
@@ -84,9 +85,7 @@ class RelativeValueIteration(ValueIteration):
         """
         while self.iteration < self.max_iter:
             # Perform iteration step
-            logger.info("Before iteration step")
             new_values, conv = self._iteration_step()
-            logger.info("After iteration step")
 
             # Update values and iteration count
             self.values = new_values

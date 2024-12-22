@@ -131,8 +131,18 @@ class Problem(ABC):
         pass
 
     @abstractmethod
-    def initial_values(self) -> jnp.ndarray:
-        """Return initial state values for value-based methods."""
+    def initial_value(self, state: jnp.ndarray) -> float:
+        """Return initial value for a given state.
+
+        This method defines how to initialize the value function for a single state.
+        The solver will handle vectorization over all states efficiently.
+
+        Args:
+            state: State vector [state_dim]
+
+        Returns:
+            Initial value for the given state
+        """
         pass
 
     def build_matrices(self) -> tuple[jnp.ndarray, jnp.ndarray]:

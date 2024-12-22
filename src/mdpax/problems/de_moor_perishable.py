@@ -166,9 +166,9 @@ class DeMoorPerishable(Problem):
 
         return next_state, reward
 
-    def initial_values(self) -> float:
+    def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on immediate cut reward."""
-        return jnp.zeros(self.n_states)
+        return 0.0
 
     ################################################################
     ### Supporting functions for self.transition() ###
