@@ -138,7 +138,7 @@ class CheckpointMixin(ABC):
                         step, args=checkpoint.args.StandardSave(cp_state)
                     )
                     status = "queued" if self.enable_async else "saved"
-                    logger.info(f"Checkpoint {status} for iteration {step}")
+                    logger.debug(f"Checkpoint {status} for iteration {step}")
                 except Exception as e:
                     logger.error(
                         f"Failed to save checkpoint at iteration {step}: {str(e)}"
@@ -187,7 +187,7 @@ class CheckpointMixin(ABC):
                             f"step {latest_step} in {restore_checkpoint_dir}",
                         ]
                     )
-                    logger.info(log_string)
+                    logger.success(log_string)
             except Exception as e:
                 logger.error(f"Failed to restore checkpoint: {str(e)}")
                 raise

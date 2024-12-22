@@ -8,7 +8,7 @@ import pytest
 from mdpax.problems.hendrix_perishable_substitution_two_product import (
     HendrixPerishableSubstitutionTwoProduct,
 )
-from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.solvers.relative_value_iteration import RelativeValueIteration
 
 
 # Compare policy output from new implementation with vio jax
@@ -31,10 +31,10 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = HendrixPerishableSubstitutionTwoProduct()
-        vi_runner = ValueIteration(
-            problem, batch_size=5000, gamma=1.0, epsilon=1e-5, max_iter=100
+        vi_runner = RelativeValueIteration(
+            problem, batch_size=5000, epsilon=1e-5, max_iter=100
         )
-        _, policy = vi_runner.solve()
+        _, policy, _ = vi_runner.solve()
         policy = np.array(policy)
         # Load in the reported policy
         reported_policy = pd.read_csv(

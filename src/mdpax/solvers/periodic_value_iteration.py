@@ -175,7 +175,6 @@ class PeriodicValueIteration(ValueIteration):
                 min_delta, max_delta = self._calculate_period_deltas_with_discount(
                     new_values, self.gamma
                 )
-
             # Convergence measure is the span of period deltas
             conv = max_delta - min_delta
         else:

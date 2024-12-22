@@ -200,13 +200,16 @@ class ValueIteration(Solver, CheckpointMixin):
         Returns:
             Tuple of (optimal values, optimal policy)
         """
+
         while self.iteration < self.max_iter:
+            self.iteration += 1
+
             # Perform iteration step
             new_values, conv = self._iteration_step()
 
             # Update values and iteration count
             self.values = new_values
-            self.iteration += 1
+
             logger.info(f"Iteration {self.iteration} maximum delta: {conv:.4f}")
 
             # Save checkpoint if enabled
@@ -228,7 +231,7 @@ class ValueIteration(Solver, CheckpointMixin):
         self.policy = self._extract_policy(self.values)
         logger.info("Policy extracted")
 
-        logger.info("Value iteration completed")
+        logger.success("Value iteration completed")
         return self.values, self.policy
 
     def _extract_policy(self, values: jnp.ndarray) -> jnp.ndarray:

@@ -6,10 +6,10 @@ import pandas as pd
 import pytest
 
 from mdpax.problems.mirjalili_perishable_platelet import MirjaliliPerishablePlatelet
-from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.solvers.periodic_value_iteration import PeriodicValueIteration
 
 
-# Compare policy output from new implementation with vio jax
+# Compare policy output from new implementation with joefarrington/viso_jax
 class TestPolicy:
     @pytest.mark.parametrize(
         "reported_policy_filename",
@@ -28,8 +28,8 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = MirjaliliPerishablePlatelet()
-        vi_runner = ValueIteration(
-            problem, batch_size=200, gamma=0.95, epsilon=1e-5, max_iter=20
+        vi_runner = PeriodicValueIteration(
+            problem, period=7, batch_size=200, gamma=0.95, epsilon=1e-4, max_iter=30
         )
         _, policy = vi_runner.solve()
         # Load in the reported policy
