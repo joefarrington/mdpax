@@ -1,13 +1,41 @@
 """Value iteration solver with periodic convergence checking."""
 
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
+import chex
 import jax.numpy as jnp
 import numpy as np
+from hydra.conf import MISSING, dataclass
 
 from mdpax.core.problem import Problem
-from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.core.solver import SolverInfo, SolverState
+from mdpax.solvers.value_iteration import ValueIteration, ValueIterationConfig
+
+
+@dataclass
+class PeriodicValueIterationConfig(ValueIterationConfig):
+    """Configuration for the Periodic Value Iteration solver."""
+
+    _target_: str = "mdpax.solvers.periodic_value_iteration.PeriodicValueIteration"
+    period: int = MISSING  # Period for convergence checking
+    clear_value_history_on_convergence: bool = True
+
+
+@chex.dataclass(frozen=True)
+class PeriodicValueIterationInfo(SolverInfo):
+    """Runtime information for periodic value iteration."""
+
+    value_history: chex.Array  # [period + 1, n_states]
+    history_index: int
+    period: int
+
+
+@chex.dataclass(frozen=True)
+class PeriodicValueIterationState(SolverState):
+    """Runtime state for periodic value iteration."""
+
+    info: PeriodicValueIterationInfo
 
 
 class PeriodicValueIteration(ValueIteration):
@@ -63,6 +91,9 @@ class PeriodicValueIteration(ValueIteration):
         if gamma == 1.0 and period < 2:
             raise ValueError("Period must be at least 2 for undiscounted case")
 
+        self.period = period
+        self.clear_value_history_on_convergence = clear_value_history_on_convergence
+
         super().__init__(
             problem,
             gamma=gamma,
@@ -75,8 +106,6 @@ class PeriodicValueIteration(ValueIteration):
             max_checkpoints=max_checkpoints,
             enable_async_checkpointing=enable_async_checkpointing,
         )
-        self.period = period
-        self.clear_value_history_on_convergence = clear_value_history_on_convergence
 
         # Initialize value history in CPU memory
         self.value_history = np.zeros((period + 1, problem.n_states))
@@ -185,32 +214,46 @@ class PeriodicValueIteration(ValueIteration):
 
         return new_values, conv
 
-    def _get_checkpoint_state(self) -> Dict:
-        """Get solver state for checkpointing.
-
-        Returns:
-            Dict containing solver state
-        """
-        state = super()._get_checkpoint_state()
-        state.update(
-            {
-                "value_history": self.value_history,
-                "history_index": self.history_index,
-                "period": self.period,
-            }
+    def _get_solver_config(self) -> PeriodicValueIterationConfig:
+        """Get solver configuration for reconstruction."""
+        return PeriodicValueIterationConfig(
+            problem=self.problem.get_problem_config(),
+            period=self.period,
+            gamma=self.gamma,
+            max_iter=self.max_iter,
+            epsilon=self.epsilon,
+            batch_size=self.batch_size,
+            jax_double_precision=self.jax_double_precision,
+            checkpoint_dir=self.checkpoint_dir,
+            checkpoint_frequency=self.checkpoint_frequency,
+            max_checkpoints=self.max_checkpoints,
+            enable_async_checkpointing=self.enable_async_checkpointing,
+            clear_value_history_on_convergence=self.clear_value_history_on_convergence,
         )
-        return state
 
-    def _restore_from_checkpoint(self, state: Dict) -> None:
-        """Restore solver state from checkpoint.
+    def _get_checkpoint_state(self) -> PeriodicValueIterationState:
+        """Get solver state for checkpointing."""
+        return PeriodicValueIterationState(
+            values=self.values,
+            policy=self.policy,
+            info=PeriodicValueIterationInfo(
+                iteration=self.iteration,
+                value_history=self.value_history,
+                history_index=self.history_index,
+                period=self.period,
+            ),
+        )
 
-        Args:
-            state: Dict containing solver state
-        """
-        super()._restore_from_checkpoint(state)
-        self.value_history = state["value_history"]
-        self.history_index = state["history_index"]
-        self.period = state["period"]
+    def _restore_from_checkpoint(
+        self, solver_state: PeriodicValueIterationState
+    ) -> None:
+        """Restore solver state from checkpoint."""
+        self.values = solver_state.values
+        self.policy = solver_state.policy
+        self.iteration = solver_state.info.iteration
+        self.value_history = solver_state.info.value_history
+        self.history_index = solver_state.info.history_index
+        self.period = solver_state.info.period
 
     def _clear_value_history(self) -> None:
         """Clear value history to free memory after convergence."""

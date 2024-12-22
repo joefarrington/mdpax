@@ -1,11 +1,16 @@
-from abc import ABC, abstractmethod
+"""Checkpointing functionality for solvers."""
+
+from abc import ABC
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
 import orbax.checkpoint as checkpoint
+from hydra.utils import instantiate
 from loguru import logger
+from omegaconf import OmegaConf
+
+from mdpax.core.solver import Solver
 
 
 class CheckpointMixin(ABC):
@@ -37,13 +42,19 @@ class CheckpointMixin(ABC):
 
     def setup_checkpointing(
         self,
-        checkpoint_dir: Union[str, Path],
-        checkpoint_frequency: int,
-        *,  # Force keyword arguments for optional parameters
+        checkpoint_dir: Optional[Union[str, Path]] = None,
+        checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
-        enable_async: bool = True,
+        enable_async_checkpointing: bool = True,
     ) -> None:
-        """Set up checkpointing infrastructure."""
+        """Setup checkpointing for the solver.
+
+        Args:
+            checkpoint_dir: Directory for checkpoints
+            checkpoint_frequency: How often to save checkpoints (iterations)
+            max_checkpoints: Maximum number of checkpoints to keep
+            enable_async: Whether to use async checkpointing
+        """
         # Validation
         if checkpoint_frequency < 0:
             raise ValueError("checkpoint_frequency must be non-negative")
@@ -51,65 +62,57 @@ class CheckpointMixin(ABC):
             raise ValueError("max_checkpoints must be non-negative")
 
         if checkpoint_dir is None:
-            checkpoint_dir = (
-                Path(self.problem.name)
-                / "checkpoints"
-                / datetime.now().strftime("%Y-%m-%d/%H:%M:%S")
+            from datetime import datetime
+
+            current_datetime = datetime.now().strftime("%Y%m%d/%H:%M:%S")
+            checkpoint_dir = Path(
+                f"checkpoints/{self.problem.name}/{current_datetime}/"
             )
 
-        # Setup
         self.checkpoint_dir = Path(checkpoint_dir).absolute()
         self.checkpoint_frequency = checkpoint_frequency
         self.max_checkpoints = max_checkpoints
-        self.enable_async = enable_async
-        self._setup_checkpoint_manager(
-            self.checkpoint_dir, max_checkpoints, enable_async
+        self.enable_async_checkpointing = enable_async_checkpointing
+
+        if checkpoint_frequency > 0:
+            self.checkpoint_manager = self._create_checkpoint_manager(
+                self.checkpoint_dir, max_checkpoints, enable_async_checkpointing
+            )
+            OmegaConf.save(
+                self._get_solver_config(), self.checkpoint_dir / "config.yaml"
+            )
+            logger.info(f"Checkpointing enabled in {self.checkpoint_dir}")
+        else:
+            self.checkpoint_manager = None
+            logger.info("Checkpointing disabled")
+
+    @property
+    def is_checkpointing_enabled(self) -> bool:
+        """Whether checkpointing is enabled."""
+        return (
+            hasattr(self, "checkpoint_frequency")
+            and self.checkpoint_frequency > 0
+            and hasattr(self, "checkpoint_manager")
         )
 
-    def _setup_checkpoint_manager(
-        self, checkpoint_dir: Union[str, Path], max_checkpoints: int, enable_async: bool
-    ) -> None:
+    @classmethod
+    def _create_checkpoint_manager(
+        cls,
+        checkpoint_dir: Union[str, Path],
+        max_checkpoints: int,
+        enable_async_checkpointing: bool,
+    ) -> checkpoint.CheckpointManager:
 
         # Configure Orbax
         options = checkpoint.CheckpointManagerOptions(
             max_to_keep=max_checkpoints,
             create=True,
-            enable_async_checkpointing=enable_async,
+            enable_async_checkpointing=enable_async_checkpointing,
         )
 
-        self.checkpoint_manager = checkpoint.CheckpointManager(
+        return checkpoint.CheckpointManager(
             checkpoint_dir,
             options=options,
-        )
-
-    @abstractmethod
-    def _get_checkpoint_state(self) -> dict:
-        """Get solver state for checkpointing.
-
-        Returns:
-            dict containing all necessary state to resume solving:
-            - values: Current value function
-            - iteration: Current iteration count
-            - Any solver-specific state needed for resuming
-        """
-        pass
-
-    @abstractmethod
-    def _restore_from_checkpoint(self, cp_state: dict) -> None:
-        """Restore solver state from checkpoint.
-
-        Args:
-            cp_state: State dict from _get_checkpoint_state()
-        """
-        pass
-
-    @property
-    def is_checkpointing_enabled(self) -> bool:
-        """Whether checkpointing is enabled and properly configured."""
-        return (
-            hasattr(self, "checkpoint_frequency")
-            and self.checkpoint_frequency > 0
-            and hasattr(self, "checkpoint_manager")
         )
 
     @contextmanager
@@ -118,11 +121,11 @@ class CheckpointMixin(ABC):
         try:
             yield
         finally:
-            if self.enable_async:
+            if self.enable_async_checkpointing:
                 self.checkpoint_manager.wait_until_finished()
 
-    def save_checkpoint(self, step: int) -> None:
-        """Save current solver state to checkpoint.
+    def save(self, step: int) -> None:
+        """Save solver state to checkpoint.
 
         Args:
             step: Current iteration/step number
@@ -130,74 +133,79 @@ class CheckpointMixin(ABC):
         if not self.is_checkpointing_enabled:
             return
 
-        if step % self.checkpoint_frequency == 0:
-            with self._checkpoint_operation():
-                try:
-                    cp_state = self._get_checkpoint_state()
-                    self.checkpoint_manager.save(
-                        step, args=checkpoint.args.StandardSave(cp_state)
-                    )
-                    status = "queued" if self.enable_async else "saved"
-                    logger.debug(f"Checkpoint {status} for iteration {step}")
-                except Exception as e:
-                    logger.error(
-                        f"Failed to save checkpoint at iteration {step}: {str(e)}"
-                    )
+        # Get state to checkpoint
+        cp_state = self._get_checkpoint_state()
 
-    def restore_latest_checkpoint(
-        self, checkpoint_dir: Optional[Union[str, Path]] = None
-    ) -> Optional[int]:
-        """Restore the latest checkpoint.
+        # Save checkpoint
+        self.checkpoint_manager.save(step, args=checkpoint.args.StandardSave(cp_state))
+
+        status = "queued" if self.enable_async_checkpointing else "saved"
+        logger.debug(f"Checkpoint {status} for iteration {step}")
+
+    @classmethod
+    def restore(
+        cls,
+        checkpoint_dir: str | Path,
+        step: Optional[int] = None,
+        new_checkpoint_dir: Optional[str | Path] = None,
+    ) -> Solver:
+        """Load solver from checkpoint.
+
+        This class method reconstructs a solver instance from a checkpoint,
+        using the stored config to recreate both the problem and solver
+        with the correct parameters.
 
         Args:
-            checkpoint_dir: Optional directory to restore from
-            (if different from current)
+            checkpoint_dir: Directory containing checkpoints
+            step: Specific step to load (defaults to latest)
 
         Returns:
-            The step number of the restored checkpoint, or None if no checkpoint found
+            Reconstructed solver instance
         """
-        if not self.is_checkpointing_enabled:
-            logger.warning("Checkpointing is not enabled")
-            return None
+        # Initialize checkpoint manager
+        checkpoint_dir = Path(checkpoint_dir).absolute()
 
-        if checkpoint_dir is not None:
-            restore_checkpoint_dir = Path(checkpoint_dir).absolute()
-            self._setup_checkpoint_manager(
-                restore_checkpoint_dir,
-                max_checkpoints=self.max_checkpoints,
-                enable_async=self.enable_async,
-            )
+        # Create solver instance with nested problem
+        config = OmegaConf.load(checkpoint_dir / "config.yaml")
+        solver = instantiate(config)
 
-        latest_step = None
-        with self._checkpoint_operation():
-            try:
-                latest_step = self.checkpoint_manager.latest_step()
-                if latest_step is not None:
-                    # Get current state as template
-                    template_state = self._get_checkpoint_state()
-                    # Restore using template
-                    cp_state = self.checkpoint_manager.restore(
-                        latest_step,
-                        args=checkpoint.args.StandardRestore(template_state),
-                    )
-                    self._restore_from_checkpoint(cp_state)
-                    log_string = " ".join(
-                        [
-                            "Restored checkpoint from",
-                            f"step {latest_step} in {restore_checkpoint_dir}",
-                        ]
-                    )
-                    logger.success(log_string)
-            except Exception as e:
-                logger.error(f"Failed to restore checkpoint: {str(e)}")
-                raise
+        template_cp_state = solver._get_checkpoint_state()
+        manager = cls._create_checkpoint_manager(checkpoint_dir, 1, True)
 
-        # We don't necessarily want to save the checkpoint in the same directory as the
-        # one we're restoring from, so we need to reset the checkpoint directory
-        self._setup_checkpoint_manager(
-            self.checkpoint_dir,
-            max_checkpoints=self.max_checkpoints,
-            enable_async=self.enable_async,
+        # Get step to restore
+        step = step or manager.latest_step()
+        if step is None:
+            raise ValueError(f"No checkpoints found in {checkpoint_dir}")
+
+        # Restore state
+        cp_state = manager.restore(
+            step,
+            args=checkpoint.args.StandardRestore(template_cp_state),
         )
 
-        return latest_step
+        if new_checkpoint_dir is not None:
+            new_checkpoint_dir = Path(new_checkpoint_dir).absolute()
+            cp_state["config"]["checkpoint_dir"] = new_checkpoint_dir
+
+        # Restore runtime state
+        solver._restore_state_from_checkpoint(cp_state)
+
+        return solver
+
+    def _get_solver_config(self) -> dict:
+        """Get solver configuration for reconstruction.
+
+        This should be implemented by solvers to return their Hydra config.
+        """
+        raise NotImplementedError("Solvers must implement _get_solver_config")
+
+    def _get_checkpoint_state(self) -> dict:
+        """Get solver state for checkpointing.
+
+        This should be implemented by solvers to return their runtime state.
+        """
+        raise NotImplementedError("Solvers must implement _get_checkpoint_state")
+
+    def _restore_state_from_checkpoint(self, state: dict) -> None:
+        """Restore solver state from checkpoint."""
+        raise NotImplementedError("Solvers must implement _restore_from_checkpoint")

@@ -3,11 +3,41 @@
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
+import chex
 import jax.numpy as jnp
+from hydra.conf import dataclass
 from loguru import logger
 
 from mdpax.core.problem import Problem
-from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.core.solver import SolverInfo, SolverState
+from mdpax.solvers.value_iteration import ValueIteration, ValueIterationConfig
+
+
+@dataclass
+class RelativeValueIterationConfig(ValueIterationConfig):
+    """Configuration for the Relative Value Iteration solver.
+
+    This solver is designed for average reward problems and extends the base
+    value iteration solver. It forces gamma=1.0 as required for average reward
+    optimization.
+    """
+
+    _target_: str = "mdpax.solvers.relative_value_iteration.RelativeValueIteration"
+    gamma: float = 1.0  # Must be 1.0 for average reward problems
+
+
+@chex.dataclass(frozen=True)
+class RelativeValueIterationInfo(SolverInfo):
+    """Runtime information for relative value iteration."""
+
+    gain: float
+
+
+@chex.dataclass(frozen=True)
+class RelativeValueIterationState(SolverState):
+    """Runtime state for relative value iteration."""
+
+    info: RelativeValueIterationInfo
 
 
 class RelativeValueIteration(ValueIteration):
@@ -102,11 +132,17 @@ class RelativeValueIteration(ValueIteration):
                 break
 
             # Save checkpoint if enabled
-            if self.is_checkpointing_enabled:
-                self.save_checkpoint(self.iteration)
+            if (
+                self.is_checkpointing_enabled
+                and self.iteration % self.checkpoint_frequency == 0
+            ):
+                self.save(self.iteration)
 
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
+
+        if self.is_checkpointing_enabled:
+            self.save(self.iteration)
 
         # Extract policy if converged or on final iteration
         logger.info("Extracting policy")
@@ -116,13 +152,33 @@ class RelativeValueIteration(ValueIteration):
         logger.info("Value iteration completed")
         return self.values, self.policy, self.gain
 
+    def _get_solver_config(self) -> RelativeValueIterationConfig:
+        """Get solver configuration for reconstruction."""
+        return RelativeValueIterationConfig(
+            problem=self.problem.get_problem_config(),
+            max_iter=self.max_iter,
+            epsilon=self.epsilon,
+            batch_size=self.batch_size,
+            jax_double_precision=self.jax_double_precision,
+            checkpoint_dir=self.checkpoint_dir,
+            checkpoint_frequency=self.checkpoint_frequency,
+            max_checkpoints=self.max_checkpoints,
+            enable_async_checkpointing=self.enable_async_checkpointing,
+        )
+
     def _get_checkpoint_state(self) -> dict:
         """Get solver state for checkpointing."""
-        cp_state = super()._get_checkpoint_state()
-        cp_state["gain"] = self.gain
-        return cp_state
+        state = RelativeValueIterationState(
+            values=self.values,
+            policy=self.policy,
+            info=RelativeValueIterationInfo(iteration=self.iteration, gain=self.gain),
+        )
+        return {"state": state}
 
-    def _restore_from_checkpoint(self, cp_state: dict) -> None:
+    def _restore_state_from_checkpoint(self, state: dict) -> None:
         """Restore solver state from checkpoint."""
-        super()._restore_from_checkpoint(cp_state)
-        self.gain = cp_state["gain"]
+        solver_state = state["state"]
+        self.values = solver_state.values
+        self.policy = solver_state.policy
+        self.iteration = solver_state.info.iteration
+        self.gain = solver_state.info.gain

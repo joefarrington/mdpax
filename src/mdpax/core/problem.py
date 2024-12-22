@@ -6,7 +6,20 @@ from typing import Tuple
 
 import jax.numpy as jnp
 import numpy as np
+from hydra.conf import MISSING, dataclass
 from jax import vmap
+
+
+@dataclass
+class ProblemConfig:
+    """Base configuration for all MDP problems.
+
+    This serves as the base configuration class that all specific problem
+    configurations should inherit from. It enforces that all problems must
+    specify their target class.
+    """
+
+    _target_: str = MISSING
 
 
 class Problem(ABC):
@@ -142,6 +155,19 @@ class Problem(ABC):
 
         Returns:
             Initial value for the given state
+        """
+        pass
+
+    @abstractmethod
+    def get_problem_config(self) -> ProblemConfig:
+        """Get problem configuration for reconstruction.
+
+        This method should return a ProblemConfig instance containing all parameters
+        needed to reconstruct this problem instance. The config will be used during
+        checkpoint restoration to recreate the problem.
+
+        Returns:
+            Problem configuration
         """
         pass
 

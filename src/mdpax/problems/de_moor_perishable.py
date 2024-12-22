@@ -6,8 +6,27 @@ import chex
 import jax
 import jax.numpy as jnp
 import numpyro
+from hydra.conf import dataclass
 
-from mdpax.core.problem import Problem
+from mdpax.core.problem import Problem, ProblemConfig
+
+
+@dataclass
+class DeMoorPerishableConfig(ProblemConfig):
+    """Configuration for the De Moor Perishable problem."""
+
+    _target_: str = "mdpax.problems.de_moor_perishable.DeMoorPerishable"
+    max_demand: int = 100
+    demand_gamma_mean: float = 4.0
+    demand_gamma_cov: float = 0.5
+    max_useful_life: int = 2
+    lead_time: int = 1
+    max_order_quantity: int = 10
+    variable_order_cost: float = 3.0
+    shortage_cost: float = 5.0
+    wastage_cost: float = 7.0
+    holding_cost: float = 1.0
+    issue_policy: str = "lifo"
 
 
 class DeMoorPerishable(Problem):
@@ -51,10 +70,15 @@ class DeMoorPerishable(Problem):
         self.max_demand = max_demand
         # Paper provides mean, CoV for gamma dist, but numpyro distribution expects
         # alpha (concentration) and beta (rate)
+        self.demand_gamma_mean = demand_gamma_mean
+        self.demand_gamma_cov = demand_gamma_cov
+
         (
             self.demand_gamma_alpha,
             self.demand_gamma_beta,
-        ) = self._convert_gamma_parameters(demand_gamma_mean, demand_gamma_cov)
+        ) = self._convert_gamma_parameters(
+            self.demand_gamma_mean, self.demand_gamma_cov
+        )
         self.demand_probabilities = self._calculate_demand_probabilities(
             self.demand_gamma_alpha, self.demand_gamma_beta
         )
@@ -69,8 +93,8 @@ class DeMoorPerishable(Problem):
                 holding_cost,
             ]
         )
-
-        if issue_policy == "fifo":
+        self.issue_policy = issue_policy
+        if self.issue_policy == "fifo":
             self._issue_stock = self._issue_fifo
         else:
             self._issue_stock = self._issue_lifo
@@ -169,6 +193,30 @@ class DeMoorPerishable(Problem):
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on immediate cut reward."""
         return 0.0
+
+    def get_problem_config(self) -> DeMoorPerishableConfig:
+        """Get problem configuration for reconstruction.
+
+        This method should return a ProblemConfig instance containing all parameters
+        needed to reconstruct this problem instance. The config will be used during
+        checkpoint restoration to recreate the problem.
+
+        Returns:
+            Problem configuration
+        """
+        return DeMoorPerishableConfig(
+            max_demand=int(self.max_demand),
+            demand_gamma_mean=float(self.demand_gamma_mean),
+            demand_gamma_cov=float(self.demand_gamma_cov),
+            max_useful_life=int(self.max_useful_life),
+            lead_time=int(self.lead_time),
+            max_order_quantity=int(self.max_order_quantity),
+            variable_order_cost=float(self.cost_components[0]),
+            shortage_cost=float(self.cost_components[1]),
+            wastage_cost=float(self.cost_components[2]),
+            holding_cost=float(self.cost_components[3]),
+            issue_policy=self.issue_policy,
+        )
 
     ################################################################
     ### Supporting functions for self.transition() ###

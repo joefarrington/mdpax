@@ -8,8 +8,28 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.stats
+from hydra.conf import dataclass
 
-from mdpax.core.problem import Problem
+from mdpax.core.problem import Problem, ProblemConfig
+
+
+@dataclass
+class HendrixPerishableSubstitutionTwoProductConfig(ProblemConfig):
+    """Configuration for the Hendrix Perishable Substitution Two Product problem."""
+
+    _target_: str = (
+        "mdpax.problems.hendrix_perishable_substitution_two_product.HendrixPerishableSubstitutionTwoProduct"
+    )
+    max_useful_life: int = 2
+    demand_poisson_mean_a: float = 5.0
+    demand_poisson_mean_b: float = 5.0
+    substitution_probability: float = 0.5
+    variable_order_cost_a: float = 0.5
+    variable_order_cost_b: float = 0.5
+    sales_price_a: float = 1.0
+    sales_price_b: float = 1.0
+    max_order_quantity_a: int = 10
+    max_order_quantity_b: int = 10
 
 
 class HendrixPerishableSubstitutionTwoProduct(Problem):
@@ -210,6 +230,27 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on one-step ahead expected sales revenue"""
         return self._calculate_expected_sales_revenue(state)
+
+    def get_problem_config(self) -> HendrixPerishableSubstitutionTwoProductConfig:
+        """Get problem configuration for reconstruction.
+
+        This method should return a ProblemConfig instance containing all parameters
+        needed to reconstruct this problem instance. The config will be used during
+        checkpoint restoration to recreate the problem.
+
+        Returns:
+            Problem configuration
+        """
+        return HendrixPerishableSubstitutionTwoProductConfig(
+            max_useful_life=self.max_useful_life,
+            demand_poisson_mean_a=self.demand_poisson_mean_a,
+            demand_poisson_mean_b=self.demand_poisson_mean_b,
+            substitution_probability=self.substitution_probability,
+            variable_order_cost_a=self.variable_order_cost_a,
+            variable_order_cost_b=self.variable_order_cost_b,
+            sales_price_a=self.sales_price_a,
+            sales_price_b=self.sales_price_b,
+        )
 
     ##################################################
     ### Supporting functions for self.transition() ###

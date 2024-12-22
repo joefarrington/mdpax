@@ -5,11 +5,28 @@ from typing import Optional, Tuple, Union
 
 import jax
 import jax.numpy as jnp
+from hydra.conf import dataclass
 from loguru import logger
 
 from mdpax.core.problem import Problem
-from mdpax.core.solver import Solver
+from mdpax.core.solver import (
+    Solver,
+    SolverInfo,
+    SolverState,
+    SolverWithCheckpointConfig,
+)
 from mdpax.utils.checkpointing import CheckpointMixin
+
+
+@dataclass
+class ValueIterationConfig(SolverWithCheckpointConfig):
+    """Configuration for the Value Iteration solver.
+
+    This is the base value iteration solver that performs synchronous updates
+    over all states. It inherits all parameters from the base SolverConfig.
+    """
+
+    _target_: str = "mdpax.solvers.value_iteration.ValueIteration"
 
 
 class ValueIteration(Solver, CheckpointMixin):
@@ -36,7 +53,7 @@ class ValueIteration(Solver, CheckpointMixin):
             checkpoint_dir,
             checkpoint_frequency,
             max_checkpoints=max_checkpoints,
-            enable_async=enable_async_checkpointing,
+            enable_async_checkpointing=enable_async_checkpointing,
         )
         self.policy = None
 
@@ -179,10 +196,6 @@ class ValueIteration(Solver, CheckpointMixin):
 
             logger.info(f"Iteration {self.iteration} maximum delta: {conv:.4f}")
 
-            # Save checkpoint if enabled
-            if self.is_checkpointing_enabled:
-                self.save_checkpoint(self.iteration)
-
             # Check convergence
             if conv < self.epsilon:
                 logger.info(
@@ -190,8 +203,20 @@ class ValueIteration(Solver, CheckpointMixin):
                 )
                 break
 
+            # Save checkpoint if enabled
+            if (
+                self.is_checkpointing_enabled
+                and self.iteration % self.checkpoint_frequency == 0
+            ):
+                self.save(self.iteration)
+
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
+
+        # Save checkpoint if enabled
+        if self.is_checkpointing_enabled:
+            print("Saving checkpoint at iteration of convergence", self.iteration)
+            self.save(self.iteration)
 
         # Extract policy if converged or on final iteration
         logger.info("Extracting policy")
@@ -226,30 +251,31 @@ class ValueIteration(Solver, CheckpointMixin):
         self.policy = jnp.take(self.problem.action_space, self.policy, axis=0)
         return self.policy
 
-    def _get_checkpoint_state(self) -> dict:
-        """Get solver state for checkpointing.
+    def _get_solver_config(self) -> ValueIterationConfig:
+        """Get solver configuration for reconstruction."""
+        return ValueIterationConfig(
+            problem=self.problem.get_problem_config(),
+            gamma=self.gamma,
+            max_iter=self.max_iter,
+            epsilon=self.epsilon,
+            batch_size=self.batch_size,
+            jax_double_precision=self.jax_double_precision,
+            checkpoint_dir=self.checkpoint_dir,
+            checkpoint_frequency=self.checkpoint_frequency,
+            max_checkpoints=self.max_checkpoints,
+            enable_async_checkpointing=self.enable_async_checkpointing,
+        )
 
-        Returns:
-            dict containing all necessary state to resume solving:
-            - values: Current value function
-            - policy: Current policy (if exists)
-            - iteration: Current iteration count
-        """
-        cp_state = {
-            "values": self.values,
-            "iteration": self.iteration,
-        }
-        if self.policy is not None:
-            cp_state["policy"] = self.policy
-        return cp_state
+    def _get_checkpoint_state(self) -> SolverState:
+        """Get solver state for checkpointing."""
+        return SolverState(
+            values=self.values,
+            policy=self.policy,
+            info=SolverInfo(iteration=self.iteration),
+        )
 
-    def _restore_from_checkpoint(self, cp_state: dict) -> None:
-        """Restore solver state from checkpoint.
-
-        Args:
-            cp_state: State dict from get_checkpoint_state()
-        """
-        self.values = cp_state["values"]
-        self.iteration = cp_state["iteration"]
-        if "policy" in cp_state:
-            self.policy = cp_state["policy"]
+    def _restore_state_from_checkpoint(self, solver_state: SolverState) -> None:
+        """Restore solver state from checkpoint."""
+        self.values = solver_state.values
+        self.policy = solver_state.policy
+        self.iteration = solver_state.info.iteration

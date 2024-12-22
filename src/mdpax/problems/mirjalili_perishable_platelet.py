@@ -5,8 +5,34 @@ import chex
 import jax
 import jax.numpy as jnp
 import numpyro
+from hydra.conf import dataclass
 
-from mdpax.core.problem import Problem
+from mdpax.core.problem import Problem, ProblemConfig
+
+
+@dataclass
+class MirjaliliPerishablePlateletConfig(ProblemConfig):
+    """Configuration for the Mirjalili Perishable Platelet problem."""
+
+    _target_: str = (
+        "mdpax.problems.mirjalili_perishable_platelet.MirjaliliPerishablePlatelet"
+    )
+    max_demand: int = 20
+    # [M, T, W, T, F, S, S]
+    weekday_demand_negbin_n: tuple[float] = tuple([3.5, 11.0, 7.2, 11.1, 5.9, 5.5, 2.2])
+    weekday_demand_negbin_delta: tuple[float] = tuple(
+        [5.7, 6.9, 6.5, 6.2, 5.8, 3.3, 3.4]
+    )
+    max_useful_life: int = 3
+    shelf_life_at_arrival_distribution_c_0: tuple[float] = tuple([1.0, 0.5])
+    shelf_life_at_arrival_distribution_c_1: tuple[float] = tuple([0.0, 0.0])
+    max_order_quantity: int = 20
+    variable_order_cost: float = 0.0
+    fixed_order_cost: float = 10.0
+    shortage_cost: float = 20.0
+    wastage_cost: float = 5.0
+    holding_cost: float = 1.0
+
 
 WEEKDAYS = [
     "Monday",  # idx 0
@@ -68,6 +94,9 @@ class MirjaliliPerishablePlatelet(Problem):
             shelf_life_at_arrival_distribution_c_1,
             max_useful_life,
         )
+
+        self.max_demand = max_demand
+
         self.shelf_life_at_arrival_distribution_c_0 = jnp.array(
             shelf_life_at_arrival_distribution_c_0
         )
@@ -81,7 +110,6 @@ class MirjaliliPerishablePlatelet(Problem):
         self.weekday_demand_negbin_p = self.weekday_demand_negbin_n / (
             self.weekday_demand_negbin_delta + self.weekday_demand_negbin_n
         )
-        self.max_demand = max_demand
 
         self.max_useful_life = max_useful_life
         self.max_order_quantity = max_order_quantity
@@ -244,6 +272,39 @@ class MirjaliliPerishablePlatelet(Problem):
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on immediate cut reward."""
         return 0.0
+
+    def get_problem_config(self) -> MirjaliliPerishablePlateletConfig:
+        """Get problem configuration for reconstruction.
+
+        This method should return a ProblemConfig instance containing all parameters
+        needed to reconstruct this problem instance. The config will be used during
+        checkpoint restoration to recreate the problem.
+
+        Returns:
+            Problem configuration
+        """
+        return MirjaliliPerishablePlateletConfig(
+            max_demand=int(self.max_demand),
+            weekday_demand_negbin_n=tuple(
+                [float(x) for x in self.weekday_demand_negbin_n]
+            ),
+            weekday_demand_negbin_delta=tuple(
+                [float(x) for x in self.weekday_demand_negbin_delta]
+            ),
+            max_useful_life=int(self.max_useful_life),
+            shelf_life_at_arrival_distribution_c_0=tuple(
+                [float(x) for x in self.shelf_life_at_arrival_distribution_c_0]
+            ),
+            shelf_life_at_arrival_distribution_c_1=tuple(
+                [float(x) for x in self.shelf_life_at_arrival_distribution_c_1]
+            ),
+            max_order_quantity=int(self.max_order_quantity),
+            variable_order_cost=float(self.cost_components[0]),
+            fixed_order_cost=float(self.cost_components[1]),
+            shortage_cost=float(self.cost_components[2]),
+            wastage_cost=float(self.cost_components[3]),
+            holding_cost=float(self.cost_components[4]),
+        )
 
     ###############################################
     ### Supporting functions for self._init__() ###

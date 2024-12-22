@@ -1,13 +1,78 @@
 """Base class for MDP solvers."""
 
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Optional, Tuple
 
+import chex
 import jax
 import jax.numpy as jnp
+from hydra.conf import MISSING, dataclass
 from loguru import logger
 
-from mdpax.core.problem import Problem
+from .problem import Problem, ProblemConfig
+
+
+@dataclass
+class SolverConfig:
+    """Base configuration for all MDP solvers.
+
+    This serves as the base configuration class that all specific solver
+    configurations should inherit from. It defines common parameters used
+    across different solvers.
+    """
+
+    _target_: str = MISSING
+    problem: ProblemConfig = MISSING
+
+    # Solver parameters
+    gamma: float = 0.99
+    max_iter: int = 1000
+    epsilon: float = 1e-3
+    batch_size: int = 1024
+    jax_double_precision: bool = True
+
+
+@dataclass
+class SolverWithCheckpointConfig(SolverConfig):
+    """Configuration for solvers with checkpointing."""
+
+    checkpoint_dir: Optional[str] = None
+    checkpoint_frequency: int = 0
+    max_checkpoints: int = 1
+    enable_async_checkpointing: bool = True
+
+
+@chex.dataclass(frozen=True)
+class SolverInfo:
+    """Base solver information.
+
+    Contains common metadata needed by all solvers. Specific solvers
+    can extend this with additional fields.
+
+    Attributes:
+        iteration: Current iteration count
+    """
+
+    iteration: int
+
+
+@chex.dataclass(frozen=True)
+class SolverState:
+    """Base runtime state for all solvers.
+
+    Contains the core state that must be maintained by all solvers.
+    Specific solvers can extend the info field with solver-specific
+    metadata.
+
+    Attributes:
+        values: Current value function [n_states]
+        policy: Current policy (if computed) [n_states, action_dim]
+        info: Solver metadata
+    """
+
+    values: chex.Array
+    policy: Optional[chex.Array]
+    info: SolverInfo
 
 
 class Solver(ABC):
@@ -22,6 +87,7 @@ class Solver(ABC):
         max_iter: Maximum iterations
         epsilon: Convergence threshold
         batch_size: Size of state batches
+        jax_double_precision: Whether to use double precision for JAX operations
 
     Attributes:
         problem: MDP problem being solved
@@ -53,7 +119,8 @@ class Solver(ABC):
         assert epsilon > 0, "Epsilon must be positive"
         assert batch_size > 0, "Batch size must be positive"
 
-        if jax_double_precision:
+        self.jax_double_precision = jax_double_precision
+        if self.jax_double_precision:
             jax.config.update("jax_enable_x64", True)
 
         self.problem = problem
