@@ -22,16 +22,8 @@ class CheckpointMixin(ABC):
 
     Required Protected Methods:
     -------------------------
-    _get_checkpoint_state() -> dict:
-        Return a dict containing all state needed to resume solving.
-        Must include at minimum:
-        - values: Current value function
-        - iteration: Current iteration count
-        Should include any solver-specific state.
-
     _restore_from_checkpoint(cp_state: dict) -> None:
         Restore solver state from a checkpoint state dict.
-        Must handle all state saved by _get_checkpoint_state.
 
     Public Interface:
     ---------------
@@ -134,7 +126,7 @@ class CheckpointMixin(ABC):
             return
 
         # Get state to checkpoint
-        cp_state = self._get_checkpoint_state()
+        cp_state = self.solver_state
 
         # Save checkpoint
         self.checkpoint_manager.save(step, args=checkpoint.args.StandardSave(cp_state))
@@ -169,7 +161,7 @@ class CheckpointMixin(ABC):
         config = OmegaConf.load(checkpoint_dir / "config.yaml")
         solver = instantiate(config)
 
-        template_cp_state = solver._get_checkpoint_state()
+        template_cp_state = solver.solver_state
         manager = cls._create_checkpoint_manager(checkpoint_dir, 1, True)
 
         # Get step to restore
@@ -198,13 +190,6 @@ class CheckpointMixin(ABC):
         This should be implemented by solvers to return their Hydra config.
         """
         raise NotImplementedError("Solvers must implement _get_solver_config")
-
-    def _get_checkpoint_state(self) -> dict:
-        """Get solver state for checkpointing.
-
-        This should be implemented by solvers to return their runtime state.
-        """
-        raise NotImplementedError("Solvers must implement _get_checkpoint_state")
 
     def _restore_state_from_checkpoint(self, state: dict) -> None:
         """Restore solver state from checkpoint."""

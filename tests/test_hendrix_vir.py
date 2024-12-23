@@ -32,8 +32,8 @@ class TestPolicy:
         vi_runner = RelativeValueIteration(
             problem, batch_size=5000, epsilon=1e-4, max_iter=100
         )
-        _, policy, _ = vi_runner.solve()
-        policy = np.array(policy)
+        result = vi_runner.solve()
+        policy = np.array(result.policy)
         # Load in the reported policy
         reported_policy = pd.read_csv(
             f"{shared_datadir}/{reported_policy_filename}",

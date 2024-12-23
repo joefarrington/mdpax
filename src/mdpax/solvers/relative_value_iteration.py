@@ -59,6 +59,7 @@ class RelativeValueIteration(ValueIteration):
         epsilon: float = 1e-3,
         batch_size: int = 1024,
         jax_double_precision: bool = True,
+        verbose: int = 2,
         checkpoint_dir: Optional[Union[str, Path]] = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
@@ -76,6 +77,7 @@ class RelativeValueIteration(ValueIteration):
             epsilon=epsilon,
             batch_size=batch_size,
             jax_double_precision=jax_double_precision,
+            verbose=verbose,
             checkpoint_dir=checkpoint_dir,
             checkpoint_frequency=checkpoint_frequency,
             max_checkpoints=max_checkpoints,
@@ -150,7 +152,7 @@ class RelativeValueIteration(ValueIteration):
         logger.info("Policy extracted")
 
         logger.info("Value iteration completed")
-        return self.values, self.policy, self.gain
+        return self.solver_state
 
     def _get_solver_config(self) -> RelativeValueIterationConfig:
         """Get solver configuration for reconstruction."""
@@ -166,14 +168,14 @@ class RelativeValueIteration(ValueIteration):
             enable_async_checkpointing=self.enable_async_checkpointing,
         )
 
-    def _get_checkpoint_state(self) -> dict:
+    @property
+    def solver_state(self) -> RelativeValueIterationState:
         """Get solver state for checkpointing."""
-        state = RelativeValueIterationState(
+        return RelativeValueIterationState(
             values=self.values,
             policy=self.policy,
             info=RelativeValueIterationInfo(iteration=self.iteration, gain=self.gain),
         )
-        return {"state": state}
 
     def _restore_state_from_checkpoint(self, state: dict) -> None:
         """Restore solver state from checkpoint."""

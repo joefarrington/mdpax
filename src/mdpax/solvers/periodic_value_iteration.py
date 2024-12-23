@@ -63,6 +63,7 @@ class PeriodicValueIteration(ValueIteration):
         epsilon: float = 1e-3,
         batch_size: int = 1024,
         jax_double_precision: bool = True,
+        verbose: int = 2,
         checkpoint_dir: Optional[Union[str, Path]] = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
@@ -78,6 +79,7 @@ class PeriodicValueIteration(ValueIteration):
             max_iter: Maximum number of iterations
             epsilon: Convergence threshold
             batch_size: Size of state batches for parallel processing
+            verbose: Verbosity level
             checkpoint_dir: Directory for checkpoints (optional)
             checkpoint_frequency: How often to save checkpoints (iterations)
             max_checkpoints: Maximum checkpoints to keep
@@ -101,6 +103,7 @@ class PeriodicValueIteration(ValueIteration):
             epsilon=epsilon,
             batch_size=batch_size,
             jax_double_precision=jax_double_precision,
+            verbose=verbose,
             checkpoint_dir=checkpoint_dir,
             checkpoint_frequency=checkpoint_frequency,
             max_checkpoints=max_checkpoints,
@@ -231,7 +234,8 @@ class PeriodicValueIteration(ValueIteration):
             clear_value_history_on_convergence=self.clear_value_history_on_convergence,
         )
 
-    def _get_checkpoint_state(self) -> PeriodicValueIterationState:
+    @property
+    def solver_state(self) -> PeriodicValueIterationState:
         """Get solver state for checkpointing."""
         return PeriodicValueIterationState(
             values=self.values,
@@ -260,8 +264,8 @@ class PeriodicValueIteration(ValueIteration):
         if self.clear_value_history_on_convergence:
             self.value_history = None
 
-    def solve(self, *args, **kwargs):
+    def solve(self) -> PeriodicValueIterationState:
         """Solve the MDP and optionally clear history."""
-        result = super().solve(*args, **kwargs)
+        _ = super().solve()
         self._clear_value_history()
-        return result
+        return self.solver_state

@@ -11,7 +11,6 @@ from loguru import logger
 from mdpax.core.problem import Problem
 from mdpax.core.solver import (
     Solver,
-    SolverInfo,
     SolverState,
     SolverWithCheckpointConfig,
 )
@@ -44,10 +43,11 @@ class ValueIteration(Solver, CheckpointMixin):
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
         enable_async_checkpointing: bool = True,
+        verbose: int = 2,
     ):
         """Initialize the solver."""
         super().__init__(
-            problem, gamma, max_iter, epsilon, batch_size, jax_double_precision
+            problem, gamma, max_iter, epsilon, batch_size, jax_double_precision, verbose
         )
         self.setup_checkpointing(
             checkpoint_dir,
@@ -178,7 +178,7 @@ class ValueIteration(Solver, CheckpointMixin):
         conv = jnp.max(jnp.abs(new_values - self.values))
         return new_values, conv
 
-    def solve(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def solve(self) -> SolverState:
         """Run solver to convergence.
 
         Returns:
@@ -215,7 +215,6 @@ class ValueIteration(Solver, CheckpointMixin):
 
         # Save checkpoint if enabled
         if self.is_checkpointing_enabled:
-            print("Saving checkpoint at iteration of convergence", self.iteration)
             self.save(self.iteration)
 
         # Extract policy if converged or on final iteration
@@ -224,7 +223,7 @@ class ValueIteration(Solver, CheckpointMixin):
         logger.info("Policy extracted")
 
         logger.success("Value iteration completed")
-        return self.values, self.policy
+        return self.solver_state
 
     def _extract_policy(self, values: jnp.ndarray) -> jnp.ndarray:
         """Extract policy from values."""
@@ -264,14 +263,6 @@ class ValueIteration(Solver, CheckpointMixin):
             checkpoint_frequency=self.checkpoint_frequency,
             max_checkpoints=self.max_checkpoints,
             enable_async_checkpointing=self.enable_async_checkpointing,
-        )
-
-    def _get_checkpoint_state(self) -> SolverState:
-        """Get solver state for checkpointing."""
-        return SolverState(
-            values=self.values,
-            policy=self.policy,
-            info=SolverInfo(iteration=self.iteration),
         )
 
     def _restore_state_from_checkpoint(self, solver_state: SolverState) -> None:

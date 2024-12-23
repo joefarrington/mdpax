@@ -1,7 +1,8 @@
 """Base class for MDP solvers."""
 
+import sys
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import chex
 import jax
@@ -10,6 +11,34 @@ from hydra.conf import MISSING, dataclass
 from loguru import logger
 
 from .problem import Problem, ProblemConfig
+
+
+def _verbosity_to_loguru_level(verbose: int) -> str:
+    """Map verbosity level (0-4) to loguru level.
+
+    Args:
+        verbose: Verbosity level
+            0: Minimal output (only errors)
+            1: Show warnings and errors
+            2: Show main progress (default)
+            3: Show detailed progress
+            4: Show everything
+
+    Returns:
+        Corresponding loguru level
+    """
+    if not isinstance(verbose, int):
+        raise TypeError("Verbosity must be an integer")
+    if verbose < 0 or verbose > 4:
+        raise ValueError("Verbosity must be between 0 and 4")
+
+    return {
+        0: "ERROR",  # Only show errors
+        1: "WARNING",  # Show warnings and errors
+        2: "INFO",  # Show main progress (default)
+        3: "DEBUG",  # Show detailed progress
+        4: "TRACE",  # Show everything
+    }[verbose]
 
 
 @dataclass
@@ -30,6 +59,7 @@ class SolverConfig:
     epsilon: float = 1e-3
     batch_size: int = 1024
     jax_double_precision: bool = True
+    verbose: int = 2  # Default to INFO level
 
 
 @dataclass
@@ -88,6 +118,12 @@ class Solver(ABC):
         epsilon: Convergence threshold
         batch_size: Size of state batches
         jax_double_precision: Whether to use double precision for JAX operations
+        verbose: Verbosity level (0-4)
+            0: Minimal output (only errors)
+            1: Show warnings and errors
+            2: Show main progress (default)
+            3: Show detailed progress
+            4: Show everything
 
     Attributes:
         problem: MDP problem being solved
@@ -111,6 +147,7 @@ class Solver(ABC):
         epsilon: float = 1e-3,
         batch_size: int = 1024,
         jax_double_precision: bool = True,
+        verbose: int = 2,
     ):
         if not isinstance(problem, Problem):
             raise TypeError("problem must be an instance of Problem")
@@ -128,10 +165,13 @@ class Solver(ABC):
         self.max_iter = max_iter
         self.epsilon = epsilon
 
+        # Set initial verbosity
+        self.set_verbosity(verbose)
+
         logger.info(f"Solver initialized with {problem.name} problem")
-        logger.info(f"Number of states: {problem.n_states}")
-        logger.info(f"Number of actions: {problem.n_actions}")
-        logger.info(f"Number of random events: {problem.n_random_events}")
+        logger.debug(f"Number of states: {problem.n_states}")
+        logger.debug(f"Number of actions: {problem.n_actions}")
+        logger.debug(f"Number of random events: {problem.n_random_events}")
 
         # Setup device information
         self.n_devices = len(jax.devices())
@@ -147,7 +187,7 @@ class Solver(ABC):
                 batch_size,  # user provided/default max
                 max(64, states_per_device),  # ensure minimum batch size
             )
-        logger.info(f"Number of devices: {self.n_devices}")
+        logger.debug(f"Number of devices: {self.n_devices}")
 
         # Initialize solver state
         self.values = None
@@ -162,6 +202,36 @@ class Solver(ABC):
 
         # Initialize values using solver-specific method
         self.values = self._initialize_values()
+
+    def set_verbosity(self, level: Union[int, str]) -> None:
+        """Set the verbosity level for solver output.
+
+        Args:
+            level: Verbosity level, either as integer (0-4) or string
+                  ('ERROR', 'WARNING', 'INFO', 'DEBUG', 'TRACE')
+
+        Integer levels map to:
+            0: Minimal output (only errors)
+            1: Show warnings and errors
+            2: Show main progress (default)
+            3: Show detailed progress
+            4: Show everything
+        """
+        # Handle string input
+        if isinstance(level, str):
+            level = level.upper()
+            valid_levels = {"ERROR": 0, "WARNING": 1, "INFO": 2, "DEBUG": 3, "TRACE": 4}
+            if level not in valid_levels:
+                raise ValueError(f"Invalid verbosity level: {level}")
+            level = valid_levels[level]
+
+        # Convert to loguru level
+        loguru_level = _verbosity_to_loguru_level(level)
+        logger.remove()
+        logger.add(sys.stderr, level=loguru_level)
+        self.verbose = level
+
+        logger.debug(f"Verbosity set to {level} ({loguru_level})")
 
     def _setup(self) -> None:
         """Setup solver computations and JIT compile functions."""
@@ -262,6 +332,15 @@ class Solver(ABC):
             self.values = new_values
             self.iteration += 1
         return self.values, self.policy
+
+    @property
+    def solver_state(self) -> SolverState:
+        """Get solver state for checkpointing."""
+        return SolverState(
+            values=self.values,
+            policy=self.policy,
+            info=SolverInfo(iteration=self.iteration),
+        )
 
     def _setup_processing(self) -> None:
         """Setup batch processing based on problem size and devices."""

@@ -34,7 +34,8 @@ class TestPolicy:
 
         problem = DeMoorPerishable(issue_policy=issuing_policy)
         vi_runner = ValueIteration(problem, gamma=0.99, max_iter=5000, epsilon=1e-5)
-        _, policy = vi_runner.solve()
+        result = vi_runner.solve()
+        policy = result.policy
 
         vi_policy = pd.DataFrame(policy)
         # Post-process policy to match reported form
