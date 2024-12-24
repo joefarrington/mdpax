@@ -1,9 +1,11 @@
+import functools
 import itertools
 from typing import Dict, List, Tuple, Union
 
 import chex
 import jax
 import jax.numpy as jnp
+import numpy as np
 import numpyro
 from hydra.conf import dataclass
 
@@ -161,10 +163,10 @@ class MirjaliliPerishablePlatelet(Problem):
 
     def _construct_random_event_space(self) -> jnp.ndarray:
         """Return array of random events, demand between 0 and max_demand."""
-        demands = jnp.arange(self.max_demand + 1).reshape(1, -1)
+        demands = np.arange(self.max_demand + 1).reshape(1, -1)
 
         # Generate all possible combinations of received order quantities split by age
-        rec_combinations = jnp.array(
+        rec_combinations = np.array(
             list(
                 itertools.product(
                     *[
@@ -181,16 +183,17 @@ class MirjaliliPerishablePlatelet(Problem):
         ]
 
         # Repeat demands for each valid combination and stack them
-        repeated_demands = jnp.repeat(
+        repeated_demands = np.repeat(
             demands, len(valid_rec_combinations), axis=0
         ).reshape(-1, 1)
-        repeated_valid_rec_combinations = jnp.repeat(
+        repeated_valid_rec_combinations = np.repeat(
             valid_rec_combinations, self.max_demand + 1, axis=0
         )
 
         # Combine the two random elements - demand and remaining useful life on arrival
-        return jnp.hstack([repeated_demands, repeated_valid_rec_combinations])
+        return jnp.array(np.hstack([repeated_demands, repeated_valid_rec_combinations]))
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def random_event_probabilities(
         self, state: jnp.ndarray, action: jnp.ndarray
     ) -> jnp.ndarray:
@@ -214,6 +217,7 @@ class MirjaliliPerishablePlatelet(Problem):
 
         return demand_component_probs * received_component_probs
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def transition(
         self,
         state: chex.Array,
@@ -269,6 +273,7 @@ class MirjaliliPerishablePlatelet(Problem):
 
         return next_state, reward
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on immediate cut reward."""
         return 0.0

@@ -73,7 +73,10 @@ class CheckpointMixin(ABC):
             OmegaConf.save(
                 self._get_solver_config(), self.checkpoint_dir / "config.yaml"
             )
-            logger.info(f"Checkpointing enabled in {self.checkpoint_dir}")
+            logger.info(
+                f"Saving checkpoints every {self.checkpoint_frequency}\
+                iteration(s) to {self.checkpoint_dir}"
+            )
         else:
             self.checkpoint_manager = None
             logger.info("Checkpointing disabled")

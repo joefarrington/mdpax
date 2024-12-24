@@ -7,6 +7,7 @@ import chex
 import jax.numpy as jnp
 import numpy as np
 from hydra.conf import MISSING, dataclass
+from loguru import logger
 
 from mdpax.core.problem import Problem
 from mdpax.core.solver import SolverInfo, SolverState
@@ -115,68 +116,6 @@ class PeriodicValueIteration(ValueIteration):
         self.history_index: int = 0
         self.value_history[0] = np.array(self.values)
 
-    def _calculate_period_deltas_without_discount(
-        self, values: jnp.ndarray
-    ) -> Tuple[float, float]:
-        """Return min and max value changes over a period without discounting.
-
-        For problems without discounting (γ=1), we simply compare current values
-        with values from one period ago. The circular buffer is arranged so that
-        index (i+1) % (period+1) contains values from one period before index i.
-
-        Args:
-            values: Current value function
-
-        Returns:
-            Tuple of (min_delta, max_delta) over the period
-        """
-        # Get values from one period ago
-        prev_index = (self.history_index + 1) % (self.period + 1)
-        values_prev = jnp.array(self.value_history[prev_index])
-
-        # Compute value differences
-        value_diffs = values - values_prev
-        return jnp.min(value_diffs), jnp.max(value_diffs)
-
-    def _calculate_period_deltas_with_discount(
-        self, values: jnp.ndarray, gamma: float
-    ) -> Tuple[float, float]:
-        """Return min and max undiscounted value changes over a period with discounting.
-
-        For discounted problems (γ<1), we need to sum the differences between
-        consecutive steps in the period, adjusting for the discount factor.
-        The differences are scaled by 1/γ^(current_iteration - p - 1) where p is
-        the position in the period, effectively removing the discount factor's
-        effect on the period delta.
-
-        Args:
-            values: Current value function
-            gamma: Discount factor
-
-        Returns:
-            Tuple of (min_delta, max_delta) over the period
-        """
-        # Initialize on CPU to avoid GPU memory overhead
-        period_deltas = np.zeros_like(values)
-
-        # Process one step at a time to minimize memory usage
-        for p in range(self.period):
-            curr_index = (self.history_index - p) % (self.period + 1)
-            prev_index = (curr_index - 1) % (self.period + 1)
-
-            # Get values and compute difference
-            values_curr = self.value_history[curr_index]
-            values_prev = self.value_history[prev_index]
-
-            # Update period deltas on CPU
-            period_deltas += (values_curr - values_prev) / (
-                gamma ** (self.iteration - p - 1)
-            )
-
-        # Final reduction on GPU
-        period_deltas = jnp.array(period_deltas)
-        return jnp.min(period_deltas), jnp.max(period_deltas)
-
     def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
         """Run one iteration and check for periodic convergence.
 
@@ -190,11 +129,9 @@ class PeriodicValueIteration(ValueIteration):
             Tuple of (new_values, convergence_measure)
         """
         # Get new values using parent's batch processing
-        new_values = self._process_batches(
-            (self.values, self.gamma), self.batched_states
+        new_values = self._update_values(
+            self.batched_states, self.problem.action_space, self.values, self.gamma
         )
-        new_values = self._unpad_results(new_values.reshape(-1))
-
         # Store values in history (CPU)
         self.history_index = (self.history_index + 1) % (self.period + 1)
         self.value_history[self.history_index] = np.array(new_values)
@@ -266,6 +203,104 @@ class PeriodicValueIteration(ValueIteration):
 
     def solve(self) -> PeriodicValueIterationState:
         """Solve the MDP and optionally clear history."""
-        _ = super().solve()
+        while self.iteration < self.max_iter:
+            self.iteration += 1
+
+            # Perform iteration step
+            new_values, conv = self._iteration_step()
+
+            # Update values and iteration count
+            self.values = new_values
+
+            logger.info(f"Iteration {self.iteration}: delta_diff: {conv:.4f}")
+
+            # Check convergence
+            if conv < self.epsilon:
+                logger.info(
+                    f"Convergence threshold reached at iteration {self.iteration}"
+                )
+                break
+
+            # Save checkpoint if enabled
+            if (
+                self.is_checkpointing_enabled
+                and self.iteration % self.checkpoint_frequency == 0
+            ):
+                self.save(self.iteration)
+
+        if conv >= self.epsilon:
+            logger.info("Maximum iterations reached")
+
+        if self.is_checkpointing_enabled:
+            self.save(self.iteration)
+
+        # Extract policy if converged or on final iteration
+        logger.info("Extracting policy")
+        self.policy = self._extract_policy(self.values)
+        logger.info("Policy extracted")
+
+        logger.info("Periodic value iteration completed")
         self._clear_value_history()
         return self.solver_state
+
+    def _calculate_period_deltas_without_discount(
+        self, values: jnp.ndarray
+    ) -> Tuple[float, float]:
+        """Return min and max value changes over a period without discounting.
+
+        For problems without discounting (γ=1), we simply compare current values
+        with values from one period ago. The circular buffer is arranged so that
+        index (i+1) % (period+1) contains values from one period before index i.
+
+        Args:
+            values: Current value function
+
+        Returns:
+            Tuple of (min_delta, max_delta) over the period
+        """
+        # Get values from one period ago
+        prev_index = (self.history_index + 1) % (self.period + 1)
+        values_prev = jnp.array(self.value_history[prev_index])
+
+        # Compute value differences
+        value_diffs = values - values_prev
+        return jnp.min(value_diffs), jnp.max(value_diffs)
+
+    def _calculate_period_deltas_with_discount(
+        self, values: jnp.ndarray, gamma: float
+    ) -> Tuple[float, float]:
+        """Return min and max undiscounted value changes over a period with discounting.
+
+        For discounted problems (γ<1), we need to sum the differences between
+        consecutive steps in the period, adjusting for the discount factor.
+        The differences are scaled by 1/γ^(current_iteration - p - 1) where p is
+        the position in the period, effectively removing the discount factor's
+        effect on the period delta.
+
+        Args:
+            values: Current value function
+            gamma: Discount factor
+
+        Returns:
+            Tuple of (min_delta, max_delta) over the period
+        """
+        # Initialize on CPU to avoid GPU memory overhead
+        period_deltas = np.zeros_like(values)
+
+        # Process one step at a time to minimize memory usage
+        for p in range(self.period):
+            curr_index = (self.history_index - p) % (self.period + 1)
+            prev_index = (curr_index - 1) % (self.period + 1)
+
+            # Get values and compute difference
+            values_curr = self.value_history[curr_index]
+            values_prev = self.value_history[prev_index]
+
+            # Update period deltas on CPU
+            period_deltas += (values_curr - values_prev) / (
+                gamma ** (self.iteration - p - 1)
+            )
+
+        # Final reduction on GPU
+        period_deltas = jnp.array(period_deltas)
+        return jnp.min(period_deltas), jnp.max(period_deltas)

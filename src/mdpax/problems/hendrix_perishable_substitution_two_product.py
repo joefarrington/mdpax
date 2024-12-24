@@ -1,5 +1,6 @@
 """Perishable inventory MDP problem from Hendrix et al. (2019)."""
 
+import functools
 import itertools
 from typing import Tuple, Union
 
@@ -153,6 +154,7 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
             )
         )
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def random_event_probabilities(
         self, state: jnp.ndarray, action: jnp.ndarray
     ) -> float:
@@ -183,6 +185,7 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
 
         return (probs_1 + probs_2 + probs_3 + probs_4).reshape(-1)
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def transition(
         self,
         state: chex.Array,
@@ -227,6 +230,7 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
             single_step_reward,
         )
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on one-step ahead expected sales revenue"""
         return self._calculate_expected_sales_revenue(state)

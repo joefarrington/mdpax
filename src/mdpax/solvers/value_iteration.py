@@ -58,106 +58,143 @@ class ValueIteration(Solver, CheckpointMixin):
         self.policy = None
 
     def _setup_solver(self) -> None:
-        """Setup solver-specific computations."""
-        # JIT compile core computations for single device
-        self._compute_state_action_values = jax.jit(
-            self._batch_state_action_values, static_argnums=(0,)
+        """Setup solver-specific computations.
+
+        This method sets up the vectorized computation of state-action values
+        and the multi-device batch processing for value updates and policy extraction.
+        Wrapping these in pmap allows for efficient parallel processing across devices
+        and JIT compilation is automatically handled.
+        """
+
+        self._transition_vmap_random_event = jax.vmap(
+            self.problem.transition, in_axes=(None, None, 0)
         )
 
-        # Setup multi-device batch processing
-        if self.n_devices > 1:
-            self._process_batches = jax.pmap(
-                self._scan_batches,
-                in_axes=((None, None), 0),  # (values, gamma), batched_states
-                axis_name="device",
-            )
-            self._extract_batch_policy_pmap = jax.pmap(
-                self._extract_policy_for_batch,
-                in_axes=(0, None),  # states, values
-                axis_name="device",
-            )
-        else:
-            # Single device processing
-            self._process_batches = self._setup_single_device()
-            self._extract_batch_policy = jax.jit(
-                self._extract_policy_for_batch,
-            )
+        self._compute_states_actions_values_vmap_states_actions = jax.vmap(
+            jax.vmap(
+                self._compute_state_action_value, in_axes=(None, 0, None, None)
+            ),  # Over actions
+            in_axes=(0, None, None, None),  # Over states
+        )
 
-    def _batch_state_action_values(
-        self, states: jnp.ndarray, values: jnp.ndarray, *args
+        self._compute_values_scan_batches_pmap_state_batches = jax.pmap(
+            self._compute_values_scan_batches,
+            in_axes=(0, None, None, None),
+            axis_name="device",
+        )
+
+        self._extract_policy_idxs_scan_batches_pmap_state_batches = jax.pmap(
+            self._extract_policy_idxs_scan_batches,
+            in_axes=(0, None, None, None),
+            axis_name="device",
+        )
+
+    def _compute_state_action_value(
+        self, state: jnp.ndarray, action: jnp.ndarray, values: jnp.ndarray, gamma: float
+    ) -> float:
+        """Compute expected value for a state-action pair.
+
+        Args:
+            state: Current state [state_dim]
+            action: Action to evaluate [action_dim]
+            values: Current value estimates [n_states]
+
+        Returns:
+            Expected value of taking action in state
+        """
+        # Get transition probabilities for this state-action pair
+        probs = self.problem.random_event_probabilities(state, action)
+
+        # Compute next states and rewards for all possible random events
+        next_states, rewards = self._transition_vmap_random_event(
+            state, action, self.problem.random_event_space
+        )
+
+        # Convert next states to indices for value lookup
+        next_state_indices = jax.vmap(self.problem.state_to_index)(next_states)
+
+        # Get next state values
+        next_values = values[next_state_indices]
+
+        # Compute expected value
+        return (rewards + gamma * next_values).dot(probs)
+
+    def _compute_values_for_batch(
+        self,
+        states: jnp.ndarray,
+        actions: jnp.ndarray,
+        values: jnp.ndarray,
+        gamma: float,
     ) -> jnp.ndarray:
-        """Compute state-action values for a batch of states."""
+        """Process a batch of states to compute new values.
 
-        # Vectorize over states and actions
-        def compute_action_value(state, action):
-            # Get transition probabilities for this state-action pair
-            probs = self.problem.random_event_probabilities(state, action)
+        This method:
+        1. Gets the action space from the problem
+        2. Uses _compute_state_action_values to compute values for all
+           state-action pairs
+        3. Takes the maximum over actions to get the new value for each state
 
-            # Compute next states and rewards for all possible random events
-            next_states, rewards = jax.vmap(
-                lambda e: self.problem.transition(state, action, e)
-            )(self.problem.random_event_space)
-
-            # Convert next states to indices for value lookup
-            next_state_indices = jax.vmap(self.problem.state_to_index)(next_states)
-
-            # Get next state values
-            next_values = values[next_state_indices]
-
-            # Compute expected value
-            return (rewards + self.gamma * next_values).dot(probs)
-
-        # Vectorize over states and actions
-        return jax.vmap(
-            jax.vmap(compute_action_value, in_axes=(None, 0)),  # Over actions
-            in_axes=(0, None),  # Over states
-        )(states, self.problem.action_space)
-
-    def _batch_value_calculation(
-        self, states: jnp.ndarray, values: jnp.ndarray, *args
-    ) -> jnp.ndarray:
-        """Process a batch of states."""
-        # Compute state-action values
-        state_action_values = self._compute_state_action_values(states, values)
-
+        Args:
+            states: Batch of states to process [batch_size, state_dim]
+            values: Current value estimates [n_states]
+            gamma: Discount factor
+        Returns:
+            New values for the batch of states [batch_size]
+        """
+        # Compute state-action values for all states and actions in batch
+        state_action_values = self._compute_states_actions_values_vmap_states_actions(
+            states, actions, values, gamma
+        )
         # Take maximum over actions
         return jnp.max(state_action_values, axis=1)
 
-    def _extract_policy_for_batch(
-        self, states: jnp.ndarray, values: jnp.ndarray
-    ) -> jnp.ndarray:
-        """Extract policy for a batch of states."""
-        # Compute state-action values
-        state_action_values = self._compute_state_action_values(states, values)
-        # Select best actions
-        return jnp.argmax(state_action_values, axis=1)
-
-    def _scan_batches(
+    def _compute_values_scan_batches(
         self,
-        carry: Tuple[jnp.ndarray, float],  # (values, gamma)
         batched_states: jnp.ndarray,
+        actions: jnp.ndarray,
+        values: jnp.ndarray,
+        gamma: float,
     ) -> jnp.ndarray:
-        """Process batches of states (for multi-device case)."""
-        values, gamma = carry
+        """Process batches of states"""
 
         def scan_fn(_, batch):
-            return (None, self._batch_value_calculation(batch, values, gamma))
+            return (None, self._compute_values_for_batch(batch, actions, values, gamma))
 
         _, new_values = jax.lax.scan(scan_fn, None, batched_states)
         return new_values
 
-    def _setup_single_device(self):
-        """Setup processing for single device."""
-        batch_fn = jax.jit(self._batch_value_calculation)
+    def _extract_policy_idxs_for_batch(
+        self,
+        states: jnp.ndarray,
+        actions: jnp.ndarray,
+        values: jnp.ndarray,
+        gamma: float,
+    ) -> jnp.ndarray:
+        """Extract policy for a batch of states."""
+        # Compute state-action values
+        state_action_values = self._compute_states_actions_values_vmap_states_actions(
+            states, actions, values, gamma
+        )
+        # Select best action idxs
+        return jnp.argmax(state_action_values, axis=1)
 
-        def process_batches(carry, states):
-            def scan_fn(_, batch):
-                return (None, batch_fn(batch, *carry))
+    def _extract_policy_idxs_scan_batches(
+        self,
+        batched_states: jnp.ndarray,
+        actions: jnp.ndarray,
+        values: jnp.ndarray,
+        gamma: float,
+    ) -> jnp.ndarray:
+        """Process batches of states"""
 
-            _, new_values = jax.lax.scan(scan_fn, None, states)
-            return new_values
+        def scan_fn(_, batch):
+            return (
+                None,
+                self._extract_policy_idxs_for_batch(batch, actions, values, gamma),
+            )
 
-        return jax.jit(process_batches)
+        _, new_policy = jax.lax.scan(scan_fn, None, batched_states)
+        return new_policy
 
     def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
         """Perform one iteration step.
@@ -166,17 +203,43 @@ class ValueIteration(Solver, CheckpointMixin):
             Tuple of (new values, convergence measure)
         """
         # Process all batches
-        device_values = self._process_batches(
-            (self.values, self.gamma), self.batched_states
+        new_values = self._update_values(
+            self.batched_states, self.problem.action_space, self.values, self.gamma
         )
-        # Combine results from all devices
-        new_values = jnp.reshape(device_values, (-1,))
-        # Remove padding if needed
-        if self.n_pad > 0:
-            new_values = new_values[: -self.n_pad]
         # Compute convergence measure
         conv = jnp.max(jnp.abs(new_values - self.values))
         return new_values, conv
+
+    def _update_values(
+        self,
+        batched_states: jnp.ndarray,
+        actions: jnp.ndarray,
+        values: jnp.ndarray,
+        gamma: float,
+    ) -> jnp.ndarray:
+        """Update values for a batch of states."""
+        device_values = self._compute_values_scan_batches_pmap_state_batches(
+            batched_states, actions, values, gamma
+        )
+        new_values = jnp.reshape(device_values, (-1,))
+        # Remove padding if needed
+        new_values = self._unpad_results(new_values)
+        return new_values
+
+    def _extract_policy(self, values: jnp.ndarray) -> jnp.ndarray:
+        """Extract policy from values."""
+
+        # Multi-device policy extraction
+        policy_action_idxs = self._extract_policy_idxs_scan_batches_pmap_state_batches(
+            self.batched_states, self.problem.action_space, values, self.gamma
+        ).reshape(-1)
+
+        # Remove padding if needed
+        policy_action_idxs = self._unpad_results(policy_action_idxs)
+
+        # Look up actual actions from policy
+        self.policy = jnp.take(self.problem.action_space, policy_action_idxs, axis=0)
+        return self.policy
 
     def solve(self) -> SolverState:
         """Run solver to convergence.
@@ -224,31 +287,6 @@ class ValueIteration(Solver, CheckpointMixin):
 
         logger.success("Value iteration completed")
         return self.solver_state
-
-    def _extract_policy(self, values: jnp.ndarray) -> jnp.ndarray:
-        """Extract policy from values."""
-        if self.n_devices > 1:
-            # Multi-device policy extraction
-            device_policies = self._extract_batch_policy_pmap(
-                self.batched_states, values
-            )
-            # Combine results from all devices
-            self.policy = jnp.reshape(device_policies, (-1,))
-        else:
-            # Single device policy extraction
-            policy_batches = []
-            for batch in self.batched_states:
-                policy_batch = self._extract_batch_policy(batch, values)
-                policy_batches.append(policy_batch)
-            self.policy = jnp.concatenate(policy_batches)
-
-        # Remove padding if needed
-        if self.n_pad > 0:
-            self.policy = self.policy[: -self.n_pad]
-
-        # Look up actual actions from policy
-        self.policy = jnp.take(self.problem.action_space, self.policy, axis=0)
-        return self.policy
 
     def _get_solver_config(self) -> ValueIterationConfig:
         """Get solver configuration for reconstruction."""

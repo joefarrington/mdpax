@@ -109,19 +109,21 @@ class RelativeValueIteration(ValueIteration):
 
         return new_values, span
 
-    def solve(self) -> Tuple[jnp.ndarray, jnp.ndarray, float]:
+    def solve(self) -> RelativeValueIterationState:
         """Run relative value iteration to convergence.
 
         Returns:
-            Tuple of (optimal values, optimal policy, gain)
+            SolverState containing final values, policy, and solver info
         """
         while self.iteration < self.max_iter:
+            self.iteration += 1
+
             # Perform iteration step
             new_values, conv = self._iteration_step()
 
             # Update values and iteration count
             self.values = new_values
-            self.iteration += 1
+
             logger.info(
                 f"Iteration {self.iteration}: span: {conv:.4f}, gain: {self.gain:.4f}"
             )
@@ -151,7 +153,7 @@ class RelativeValueIteration(ValueIteration):
         self.policy = self._extract_policy(self.values)
         logger.info("Policy extracted")
 
-        logger.info("Value iteration completed")
+        logger.info("Relative value iteration completed")
         return self.solver_state
 
     def _get_solver_config(self) -> RelativeValueIterationConfig:
