@@ -1,6 +1,5 @@
 """Perishable inventory MDP problem from De Moor et al. (2022)."""
 
-import functools
 from typing import Tuple, Union
 
 import chex
@@ -142,7 +141,6 @@ class DeMoorPerishable(Problem):
         """Return array of random events, demand between 0 and max_demand."""
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def random_event_probabilities(
         self, state: jnp.ndarray, action: jnp.ndarray
     ) -> float:
@@ -153,7 +151,6 @@ class DeMoorPerishable(Problem):
         """
         return self.demand_probabilities
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def transition(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -193,7 +190,6 @@ class DeMoorPerishable(Problem):
 
         return next_state, reward
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on immediate cut reward."""
         return 0.0

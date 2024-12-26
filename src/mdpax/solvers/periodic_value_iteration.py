@@ -130,7 +130,11 @@ class PeriodicValueIteration(ValueIteration):
         """
         # Get new values using parent's batch processing
         new_values = self._update_values(
-            self.batched_states, self.problem.action_space, self.values, self.gamma
+            self.batched_states,
+            self.problem.action_space,
+            self.problem.random_event_space,
+            self.values,
+            self.gamma,
         )
         # Store values in history (CPU)
         self.history_index = (self.history_index + 1) % (self.period + 1)
@@ -207,6 +211,7 @@ class PeriodicValueIteration(ValueIteration):
             self.iteration += 1
 
             # Perform iteration step
+            logger.debug(f"Value shape: {self.values.shape}")
             new_values, conv = self._iteration_step()
 
             # Update values and iteration count
@@ -236,7 +241,7 @@ class PeriodicValueIteration(ValueIteration):
 
         # Extract policy if converged or on final iteration
         logger.info("Extracting policy")
-        self.policy = self._extract_policy(self.values)
+        self.policy = self._extract_policy()
         logger.info("Policy extracted")
 
         logger.info("Periodic value iteration completed")

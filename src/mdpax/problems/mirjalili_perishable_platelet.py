@@ -1,4 +1,3 @@
-import functools
 import itertools
 from typing import Dict, List, Tuple, Union
 
@@ -193,7 +192,6 @@ class MirjaliliPerishablePlatelet(Problem):
         # Combine the two random elements - demand and remaining useful life on arrival
         return jnp.array(np.hstack([repeated_demands, repeated_valid_rec_combinations]))
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def random_event_probabilities(
         self, state: jnp.ndarray, action: jnp.ndarray
     ) -> jnp.ndarray:
@@ -217,7 +215,6 @@ class MirjaliliPerishablePlatelet(Problem):
 
         return demand_component_probs * received_component_probs
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def transition(
         self,
         state: chex.Array,
@@ -273,7 +270,6 @@ class MirjaliliPerishablePlatelet(Problem):
 
         return next_state, reward
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on immediate cut reward."""
         return 0.0

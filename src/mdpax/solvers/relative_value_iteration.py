@@ -150,7 +150,7 @@ class RelativeValueIteration(ValueIteration):
 
         # Extract policy if converged or on final iteration
         logger.info("Extracting policy")
-        self.policy = self._extract_policy(self.values)
+        self.policy = self._extract_policy()
         logger.info("Policy extracted")
 
         logger.info("Relative value iteration completed")
