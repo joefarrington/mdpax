@@ -7,9 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro
 from hydra.conf import dataclass
-from loguru import logger
 
 from mdpax.core.problem import Problem, ProblemConfig
+from mdpax.utils.spaces import (
+    construct_space_from_bounds,
+    space_dimensions_from_bounds,
+    state_with_dimensions_to_index,
+)
 
 
 @dataclass
@@ -106,12 +110,8 @@ class MirjaliliPerishablePlatelet(Problem):
             shelf_life_at_arrival_distribution_c_1
         )
 
-        # Calculate probability of success, from parameterisation provided in MM thesis
         self.weekday_demand_negbin_n = jnp.array(weekday_demand_negbin_n)
         self.weekday_demand_negbin_delta = jnp.array(weekday_demand_negbin_delta)
-        self.weekday_demand_negbin_p = self.weekday_demand_negbin_n / (
-            self.weekday_demand_negbin_delta + self.weekday_demand_negbin_n
-        )
 
         self.max_useful_life = max_useful_life
         self.max_order_quantity = max_order_quantity
@@ -127,15 +127,28 @@ class MirjaliliPerishablePlatelet(Problem):
 
         super().__init__()
 
-        self.state_component_lookup = self._construct_state_component_lookup()
-        self.event_component_lookup = self._construct_event_component_lookup()
-
     @property
     def name(self) -> str:
         """Name of the problem."""
         return "mirjalili_perishable_platelet"
 
-    def _construct_state_bounds(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _setup_before_space_construction(self) -> None:
+        """Setup before space construction."""
+        # Calculate probability of success, from parameterisation provided in MM thesis
+        self.weekday_demand_negbin_p = self.weekday_demand_negbin_n / (
+            self.weekday_demand_negbin_delta + self.weekday_demand_negbin_n
+        )
+
+        self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
+        self.state_component_lookup = self._construct_state_component_lookup()
+        self.event_component_lookup = self._construct_event_component_lookup()
+
+    def _setup_after_space_construction(self) -> None:
+        """Setup after space construction."""
+        pass
+
+    @property
+    def _state_bounds(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
@@ -153,13 +166,13 @@ class MirjaliliPerishablePlatelet(Problem):
         )
         return mins, maxs
 
+    def _construct_state_space(self) -> jnp.ndarray:
+        """Return array of states, weekday and stock."""
+        return construct_space_from_bounds(self._state_bounds)
+
     def _construct_action_space(self) -> jnp.ndarray:
         """Return array of actions, order quantities from 0 to max_order_quantity."""
         return jnp.arange(0, self.max_order_quantity + 1)
-
-    def action_components(self) -> List[str]:
-        """Return list of action component names."""
-        return ["order_quantity"]
 
     def _construct_random_event_space(self) -> jnp.ndarray:
         """Return array of random events, demand between 0 and max_demand."""
@@ -193,18 +206,19 @@ class MirjaliliPerishablePlatelet(Problem):
         # Combine the two random elements - demand and remaining useful life on arrival
         return jnp.array(np.hstack([repeated_demands, repeated_valid_rec_combinations]))
 
+    def state_to_index(self, state: jnp.ndarray) -> int:
+        """Convert state vector to index."""
+        return state_with_dimensions_to_index(state, self._state_dimensions)
+
     def random_event_probability(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> jnp.ndarray:
+    ) -> float:
         """Compute probability of the random event given state and action.
 
         Combines demand probabilities (based on weekday) with order receipt
         probabilities (based on action).
         """
 
-        logger.info(f"state: {state}")
-        logger.info(f"action: {action}")
-        logger.info(f"random_event: {random_event}")
         weekday = state[self.state_component_lookup["weekday"]]
 
         # Get probabilities for demand component
@@ -213,7 +227,7 @@ class MirjaliliPerishablePlatelet(Problem):
 
         # Get probabilities for received order component
         received_prob = self._calculate_received_order_probabilities(
-            action, random_event[self.event_component_lookup["order"]]
+            action, random_event[self.event_component_lookup["stock_received"]]
         )
 
         return demand_prob * received_prob
@@ -226,7 +240,7 @@ class MirjaliliPerishablePlatelet(Problem):
     ) -> Tuple[chex.Array, float]:
         """A transition in the environment for a given state, action and random event"""
         demand = random_event[self.event_component_lookup["demand"]]
-        max_stock_received = random_event[self.event_component_lookup["order"]]
+        max_stock_received = random_event[self.event_component_lookup["stock_received"]]
         opening_stock_after_delivery = (
             jnp.hstack(
                 [
@@ -247,8 +261,9 @@ class MirjaliliPerishablePlatelet(Problem):
         stock_after_issue = self._issue_oufo(opening_stock_after_delivery, demand)
 
         # Compute variables required to calculate the cost
-        variable_order = action
-        fixed_order = action > 0
+        order_quantity = action
+        variable_order = order_quantity
+        fixed_order = order_quantity > 0
         shortage = jnp.max(
             jnp.array([demand - jnp.sum(opening_stock_after_delivery), 0])
         )
@@ -362,7 +377,7 @@ class MirjaliliPerishablePlatelet(Problem):
         """
         return {
             "demand": 0,  # single index
-            "order": slice(1, self.max_useful_life + 1),  # slice for array
+            "stock_received": slice(1, self.max_useful_life + 1),  # slice for array
         }
 
     def _issue_oufo(self, opening_stock: chex.Array, demand: int) -> chex.Array:

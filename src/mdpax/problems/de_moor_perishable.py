@@ -9,6 +9,11 @@ import numpyro
 from hydra.conf import dataclass
 
 from mdpax.core.problem import Problem, ProblemConfig
+from mdpax.utils.spaces import (
+    construct_space_from_bounds,
+    space_dimensions_from_bounds,
+    state_with_dimensions_to_index,
+)
 
 
 @dataclass
@@ -72,16 +77,6 @@ class DeMoorPerishable(Problem):
         # alpha (concentration) and beta (rate)
         self.demand_gamma_mean = demand_gamma_mean
         self.demand_gamma_cov = demand_gamma_cov
-
-        (
-            self.demand_gamma_alpha,
-            self.demand_gamma_beta,
-        ) = self._convert_gamma_parameters(
-            self.demand_gamma_mean, self.demand_gamma_cov
-        )
-        self.demand_probabilities = self._calculate_demand_probabilities(
-            self.demand_gamma_alpha, self.demand_gamma_beta
-        )
         self.max_useful_life = max_useful_life
         self.lead_time = lead_time
         self.max_order_quantity = max_order_quantity
@@ -101,15 +96,45 @@ class DeMoorPerishable(Problem):
 
         super().__init__()
 
-        self.state_component_lookup = self._construct_state_component_lookup()
-        self.event_component_lookup = self._construct_event_component_lookup()
-
     @property
     def name(self) -> str:
         """Name of the problem."""
         return "de_moor_perishable"
 
-    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def _setup_before_space_construction(self):
+        """Setup before space construction."""
+        (
+            self.demand_gamma_alpha,
+            self.demand_gamma_beta,
+        ) = self._convert_gamma_parameters(
+            self.demand_gamma_mean, self.demand_gamma_cov
+        )
+
+        self.demand_probabilities = self._calculate_demand_probabilities(
+            self.demand_gamma_alpha, self.demand_gamma_beta
+        )
+
+        self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
+        self.state_component_lookup = self._construct_state_component_lookup()
+
+    def _setup_after_space_construction(self):
+        """Setup after space construction."""
+        pass
+
+    def _construct_state_space(self) -> jnp.ndarray:
+        """Construct state space."""
+        return construct_space_from_bounds(self._state_bounds)
+
+    def _construct_action_space(self) -> jnp.ndarray:
+        """Construct action space."""
+        return jnp.arange(0, self.max_order_quantity + 1)
+
+    def _construct_random_event_space(self) -> jnp.ndarray:
+        """Construct random event space."""
+        return jnp.arange(0, self.max_demand + 1)
+
+    @property
+    def _state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
@@ -129,17 +154,9 @@ class DeMoorPerishable(Problem):
 
         return mins, maxs
 
-    def _construct_action_space(self) -> jnp.ndarray:
-        """Return array of actions, order quantities from 0 to max_order_quantity."""
-        return jnp.arange(0, self.max_order_quantity + 1)
-
-    def action_components(self) -> list[str]:
-        """Return list of action component names."""
-        return ["order_quantity"]  # only one action component, the order quantity
-
-    def _construct_random_event_space(self) -> jnp.ndarray:
-        """Return array of random events, demand between 0 and max_demand."""
-        return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
+    def state_to_index(self, state: jnp.ndarray) -> int:
+        """Convert state vector to index."""
+        return state_with_dimensions_to_index(state, self._state_dimensions)
 
     def random_event_probability(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
@@ -149,13 +166,14 @@ class DeMoorPerishable(Problem):
         Demand is generated from a gamma distribution with mean demand_gamma_mean
         and CoV demand_gamma_cov and is independent of the state and action.
         """
+        # Demand value is the same as the index of the random event
         return self.demand_probabilities[random_event]
 
     def transition(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Compute next state and reward for forest transition."""
-        demand = random_event[self.event_component_lookup["demand"]]
+        demand = random_event
 
         opening_in_transit = state[self.state_component_lookup["in_transit"]]
 
@@ -229,10 +247,6 @@ class DeMoorPerishable(Problem):
             "in_transit": slice(0, self.lead_time - 1),
             "stock": slice(self.lead_time - 1, self.max_useful_life),
         }
-
-    def _construct_event_component_lookup(self) -> dict[str, int]:
-        """Return a dictionary that maps name of event component to an index or slice"""
-        return {"demand": 0}
 
     def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
         """Issue stock using FIFO policy"""

@@ -1,11 +1,9 @@
 """Base class for defining MDP problems in a structured way."""
 
-import itertools
 from abc import ABC, abstractmethod
 from typing import Tuple
 
 import jax.numpy as jnp
-import numpy as np
 from hydra.conf import MISSING, dataclass
 from jax import vmap
 
@@ -32,32 +30,11 @@ class Problem(ABC):
 
     def __init__(self):
         """Initialize problem with all spaces and lookups constructed immediately."""
-        self._state_bounds = self._construct_state_bounds()
-        self._state_dimension_sizes = self._construct_state_dimension_sizes()
+        self._setup_before_space_construction()
         self._state_space = self._construct_state_space()
         self._action_space = self._construct_action_space()
         self._random_event_space = self._construct_random_event_space()
-
-    # State Space Methods
-    @property
-    def state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Min and max values for each state dimension."""
-        return self._state_bounds
-
-    @property
-    def state_space(self) -> jnp.ndarray:
-        """Array of all possible states [n_states, state_dim]."""
-        return self._state_space
-
-    @property
-    def state_dimension_sizes(self) -> tuple[int, ...]:
-        """Size of each dimension computed from bounds."""
-        return self._state_dimension_sizes
-
-    @property
-    def n_states(self) -> int:
-        """Number of states in the problem."""
-        return len(self.state_space)
+        self._setup_after_space_construction()
 
     @property
     @abstractmethod
@@ -65,31 +42,34 @@ class Problem(ABC):
         """Name of the problem."""
         pass
 
-    @abstractmethod
-    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Return (min_values, max_values) for each state dimension."""
+    def _setup_before_space_construction(self):
+        """Setup before space construction."""
         pass
 
+    def _setup_after_space_construction(self):
+        """Setup after space construction."""
+        pass
+
+    # State Space Methods
+    @property
+    def state_space(self) -> jnp.ndarray:
+        """Array of all possible states [n_states, state_dim]."""
+        return self._state_space
+
+    @property
+    def n_states(self) -> int:
+        """Number of states in the problem."""
+        return len(self.state_space)
+
+    @abstractmethod
     def _construct_state_space(self) -> jnp.ndarray:
-        """Construct state space from bounds."""
-        mins, maxs = self.state_bounds
-        ranges = [
-            np.arange(min_val, max_val + 1) for min_val, max_val in zip(mins, maxs)
-        ]
-        # More efficient to convert to numpy array first
-        states = np.array(list(itertools.product(*ranges)), dtype=jnp.int32)
-        return jnp.array(states)
+        """Build an array of all possible states."""
+        pass
 
-    def _construct_state_dimension_sizes(self) -> tuple[int, ...]:
-        """Return maximum size for each state dimension."""
-        mins, maxs = self.state_bounds
-        return tuple(jnp.array(maxs - mins + 1, dtype=jnp.int32))
-
+    @abstractmethod
     def state_to_index(self, state: jnp.ndarray) -> int:
         """Convert state vector to index."""
-        return jnp.ravel_multi_index(
-            tuple(state), self.state_dimension_sizes, mode="wrap"
-        )
+        pass
 
     # Action Space Methods
     @property
@@ -104,12 +84,7 @@ class Problem(ABC):
 
     @abstractmethod
     def _construct_action_space(self) -> jnp.ndarray:
-        """Construct and return the action space [n_actions, action_dim]."""
-        pass
-
-    @abstractmethod
-    def action_components(self) -> list[str]:
-        """Return list of action component names."""
+        """Build an array of all possible actions."""
         pass
 
     # Random Event Methods
@@ -125,7 +100,7 @@ class Problem(ABC):
 
     @abstractmethod
     def _construct_random_event_space(self) -> jnp.ndarray:
-        """Construct and return the random event space [n_events, event_dim]."""
+        """Build an array of all possible random events."""
         pass
 
     @abstractmethod

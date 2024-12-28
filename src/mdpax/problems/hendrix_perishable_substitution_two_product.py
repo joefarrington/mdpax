@@ -1,6 +1,5 @@
 """Perishable inventory MDP problem from Hendrix et al. (2019)."""
 
-import itertools
 from typing import Tuple, Union
 
 import chex
@@ -11,6 +10,11 @@ import scipy.stats
 from hydra.conf import dataclass
 
 from mdpax.core.problem import Problem, ProblemConfig
+from mdpax.utils.spaces import (
+    construct_space_from_bounds,
+    space_dimensions_from_bounds,
+    state_with_dimensions_to_index,
+)
 
 
 @dataclass
@@ -82,24 +86,35 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         self.max_order_quantity_a = max_order_quantity_a
         self.max_order_quantity_b = max_order_quantity_b
 
-        self.max_stock_a = self.max_order_quantity_a * self.max_useful_life
-        self.max_stock_b = self.max_order_quantity_b * self.max_useful_life
-        self.max_demand = self.max_useful_life * (
-            max(self.max_order_quantity_a, self.max_order_quantity_b) + 2
-        )
         super().__init__()
-        self.state_component_lookup = self._construct_state_component_lookup()
-        self.event_component_lookup = self._construct_event_component_lookup()
-        # Precompute conditional probabilities for speed
-        self.pu = self._calculate_pu()
-        self.pz = self._calculate_pz()
 
     @property
     def name(self) -> str:
         """Name of the problem."""
         return "hendrix_perishable_substitution_two_product"
 
-    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def _setup_before_space_construction(self) -> None:
+        self.max_stock_a = self.max_order_quantity_a * self.max_useful_life
+        self.max_stock_b = self.max_order_quantity_b * self.max_useful_life
+        self.max_demand = self.max_useful_life * (
+            max(self.max_order_quantity_a, self.max_order_quantity_b) + 2
+        )
+
+        self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
+        self._random_event_dimensions = space_dimensions_from_bounds(
+            self._random_event_bounds
+        )
+        self.state_component_lookup = self._construct_state_component_lookup()
+        self.action_component_lookup = self._construct_action_component_lookup()
+        self.event_component_lookup = self._construct_event_component_lookup()
+
+    def _setup_after_space_construction(self) -> None:
+        # Precompute conditional probabilities for speed
+        self.pu = self._calculate_pu()
+        self.pz = self._calculate_pz()
+
+    @property
+    def _state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
@@ -128,35 +143,31 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
 
         return mins, maxs
 
+    @property
+    def _random_event_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return min and max values for each random event dimension."""
+        mins = jnp.array([0, 0])
+        maxs = jnp.array([self.max_stock_a, self.max_stock_b])
+        return mins, maxs
+
+    def _construct_state_space(self) -> jnp.ndarray:
+        """Construct state space."""
+        return construct_space_from_bounds(self._state_bounds)
+
     def _construct_action_space(self) -> jnp.ndarray:
         """Return array of actions, pairs of order quantities for products A and B."""
-        return jnp.array(
-            list(
-                itertools.product(
-                    range(0, self.max_order_quantity_a + 1),
-                    range(0, self.max_order_quantity_b + 1),
-                )
-            )
-        )
-
-    def action_components(self) -> list[str]:
-        """Return list of action component names."""
-        return ["order_quantity_a", "order_quantity_b"]
+        mins = jnp.array([0, 0])
+        maxs = jnp.array([self.max_order_quantity_a, self.max_order_quantity_b])
+        return construct_space_from_bounds((mins, maxs))
 
     def _construct_random_event_space(self) -> jnp.ndarray:
         """Return array of random events, number of units issued of product A and B."""
-        return jnp.array(
-            list(
-                itertools.product(
-                    range(0, self.max_stock_a + 1), range(0, self.max_stock_b + 1)
-                )
-            )
-        )
+        return construct_space_from_bounds(self._random_event_bounds)
 
-    def random_event_probabilities(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_events: jnp.ndarray
+    def random_event_probability(
+        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> float:
-        """Returns an array of the probabilities of each possible random outcome
+        """Returns an array of the probabilities of the random event
         for the provided state-action pair"""
         stock_a = jnp.sum(
             jax.lax.dynamic_slice(
@@ -180,8 +191,8 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         probs_3 = self._get_probs_ia_lt_stock_a_ib_eq_stock_b(stock_a, stock_b)
         # Issued a equal to stock of a, issued b equal to stock of b
         probs_4 = self._get_probs_ia_eq_stock_a_ib_eq_stock_b(stock_a, stock_b)
-
-        return (probs_1 + probs_2 + probs_3 + probs_4).reshape(-1)
+        all_probs = (probs_1 + probs_2 + probs_3 + probs_4).reshape(-1)
+        return all_probs[self._random_event_to_index(random_event)]
 
     def transition(
         self,
@@ -227,6 +238,16 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
             single_step_reward,
         )
 
+    def state_to_index(self, state: jnp.ndarray) -> int:
+        """Convert state vector to index."""
+        return state_with_dimensions_to_index(state, self._state_dimensions)
+
+    def _random_event_to_index(self, random_event: jnp.ndarray) -> int:
+        """Convert random event vector to index."""
+        return state_with_dimensions_to_index(
+            random_event, self._random_event_dimensions
+        )
+
     def initial_value(self, state: jnp.ndarray) -> float:
         """Initial value estimate based on one-step ahead expected sales revenue"""
         return self._calculate_expected_sales_revenue(state)
@@ -268,10 +289,12 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     def _construct_event_component_lookup(self) -> dict[str, int]:
         """Returns a dictionary that maps descriptive names of the components of a event
         to indices of the elements in the event array"""
-        event_component_lookup = {}
-        event_component_lookup["issued_a"] = 0
-        event_component_lookup["issued_b"] = 1
-        return event_component_lookup
+        return {"issued_a": 0, "issued_b": 1}
+
+    def _construct_action_component_lookup(self) -> dict[str, int]:
+        """Returns a dictionary that maps descriptive names of the components
+        of a action to indices of the elements in the action array"""
+        return {"order_quantity_a": 0, "order_quantity_b": 1}
 
     def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
         """Issue stock using FIFO policy"""
@@ -445,9 +468,9 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
 
     def _calculate_expected_sales_revenue(self, state: chex.Array) -> float:
         """Calculate the expected sales revenue for a given state"""
-        issued_probabilities = self.random_event_probabilities(
-            state, 0, self.random_event_space
-        )
+        issued_probabilities = jax.vmap(
+            self.random_event_probability, in_axes=(None, None, 0)
+        )(state, 0, self.random_event_space)
         expected_sales_revenue = issued_probabilities.dot(
             self._calculate_sales_revenue_for_possible_random_outcomes()
         )
