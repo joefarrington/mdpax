@@ -129,10 +129,10 @@ class Problem(ABC):
         pass
 
     @abstractmethod
-    def random_event_probabilities(
-        self, state: jnp.ndarray, action: jnp.ndarray
+    def random_event_probability(
+        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> float:
-        """Return probabilities of each random events given state-action pair."""
+        """Return probabilities of a random event given state-action pair."""
         pass
 
     # Core MDP Methods
