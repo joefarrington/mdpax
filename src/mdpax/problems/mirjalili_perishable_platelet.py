@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro
 from hydra.conf import dataclass
+from loguru import logger
 
 from mdpax.core.problem import Problem, ProblemConfig
 
@@ -192,28 +193,30 @@ class MirjaliliPerishablePlatelet(Problem):
         # Combine the two random elements - demand and remaining useful life on arrival
         return jnp.array(np.hstack([repeated_demands, repeated_valid_rec_combinations]))
 
-    def random_event_probabilities(
-        self, state: jnp.ndarray, action: jnp.ndarray
+    def random_event_probability(
+        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> jnp.ndarray:
         """Compute probability of the random event given state and action.
 
         Combines demand probabilities (based on weekday) with order receipt
         probabilities (based on action).
         """
+
+        logger.info(f"state: {state}")
+        logger.info(f"action: {action}")
+        logger.info(f"random_event: {random_event}")
         weekday = state[self.state_component_lookup["weekday"]]
 
         # Get probabilities for demand component
         demand_probs = self._calculate_demand_probabilities(weekday)
-        demand_component_probs = demand_probs[
-            self.random_event_space[:, self.event_component_lookup["demand"]]
-        ]
+        demand_prob = demand_probs[random_event[self.event_component_lookup["demand"]]]
 
         # Get probabilities for received order component
-        received_component_probs = self._calculate_received_order_probabilities(
-            action, self.random_event_space[:, self.event_component_lookup["order"]]
+        received_prob = self._calculate_received_order_probabilities(
+            action, random_event[self.event_component_lookup["order"]]
         )
 
-        return demand_component_probs * received_component_probs
+        return demand_prob * received_prob
 
     def transition(
         self,
@@ -428,7 +431,7 @@ class MirjaliliPerishablePlatelet(Problem):
         return demand_probs
 
     def _calculate_received_order_probabilities(
-        self, action: int, possible_receipts: jnp.ndarray
+        self, action: int, received_order: jnp.ndarray
     ) -> jnp.ndarray:
         """Calculate probabilities for each possible order receipt combination.
 
@@ -438,10 +441,9 @@ class MirjaliliPerishablePlatelet(Problem):
         dist = numpyro.distributions.Multinomial(
             logits=multinomial_logits, total_count=action
         )
-
         # Only allow combinations that sum to action
         return jnp.where(
-            possible_receipts.sum(axis=1) == action,
-            jnp.exp(dist.log_prob(possible_receipts)),
+            received_order.sum() == action,
+            jnp.exp(dist.log_prob(received_order)),
             0,
         )

@@ -339,8 +339,9 @@ class NewValueIterationRunner:
         # Get the states as tuples initially so they can be used to get
         # state_to_idx_mapping
         # before being converted to a jax.numpy array
-        self.state_tuples, self.problem.state_component_idx_dict = (
-            self.problem.generate_states()
+        self.state_tuples = self.problem.generate_states()
+        self.problem.state_component_lookup = (
+            self.problem._construct_state_component_lookup()
         )
         self.state_to_idx_mapping = self.problem.create_state_to_idx_mapping(
             self.state_tuples
@@ -366,6 +367,11 @@ class NewValueIterationRunner:
             self.possible_random_outcomes,
             self.problem.pro_component_idx_dict,
         ) = self.problem.generate_possible_random_outcomes()
+        self.problem.event_component_lookup = (
+            self.problem._construct_event_component_lookup()
+        )
+
+        self.problem.random_event_space = self.possible_random_outcomes
 
         # Hook for custom setup in subclasses
         self._setup_after_states_actions_random_outcomes_created()
@@ -591,43 +597,3 @@ class NewValueIterationRunner:
             fname = self.cp_path / f"values_{j}.csv"
             values_dict[j] = jnp.array(pd.read_csv(fname)["V"].values)
         return values_dict
-
-    ##### Utility functions to set up pytree for class #####
-    # See https://jax.readthedocs.io/en/latest/faq.html#strategy-3-making-customclass-a-pytree
-
-    def _tree_flatten(self):
-        # This method should return two items as described in the
-        # documentation linked above
-        # 1) A tuple containing any arrays/dynamic values that
-        # are properties of the class
-        # 2) A dictionary containing any static values that are properties of the class
-        children = (
-            self.state_to_idx_mapping,
-            self.states,
-            self.padded_batched_states,
-            self.actions,
-            self.possible_random_outcomes,
-            self.V_old,
-            self.iteration,
-        )  # arrays / dynamic values
-        aux_data = {
-            "max_batch_size": self.max_batch_size,
-            "batch_size": self.batch_size,
-            "n_devices": self.n_devices,
-            "epsilon": self.epsilon,
-            "gamma": self.gamma,
-            "checkpoint_frequency": self.checkpoint_frequency,
-            "cp_path": self.cp_path,
-            "resume_from_checkpoint": self.resume_from_checkpoint,
-            "state_tuples": self.state_tuples,
-            "action_labels": self.action_labels,
-            "state_component_idx_dict": self.state_component_idx_dict,
-            "pro_component_idx_dict": self.pro_component_idx_dict,
-            "n_pad": self.n_pad,
-            "output_info": self.output_info,
-        }  # static values
-        return (children, aux_data)
-
-    @classmethod
-    def _tree_unflatten(cls, aux_data, children):
-        return cls(*children, **aux_data)

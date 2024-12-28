@@ -163,7 +163,7 @@ class PeriodicValueIteration(ValueIteration):
         return PeriodicValueIterationConfig(
             problem=self.problem.get_problem_config(),
             period=self.period,
-            gamma=self.gamma,
+            gamma=float(self.gamma),
             max_iter=self.max_iter,
             epsilon=self.epsilon,
             batch_size=self.batch_size,

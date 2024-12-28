@@ -50,6 +50,7 @@ class ValueIteration(Solver, CheckpointMixin):
         super().__init__(
             problem, gamma, max_iter, epsilon, batch_size, jax_double_precision, verbose
         )
+        self.gamma = jnp.array(gamma)
         self.setup_checkpointing(
             checkpoint_dir,
             checkpoint_frequency,
@@ -60,68 +61,74 @@ class ValueIteration(Solver, CheckpointMixin):
 
     def _setup_solver(self) -> None:
         """Setup solver-specific computations."""
+        # Cache problem methods at the start
+        transition_fn = self.problem.transition
+        prob_fn = jax.vmap(
+            self.problem.random_event_probability, in_axes=(None, None, 0)
+        )  # vmap over random events
+        state_to_idx_fn = self.problem.state_to_index
 
-        # 1. Base state-action value computation with all nested vmaps
-        def compute_state_action_value(state, action, random_events, values, gamma):
-            logger.debug("Computing state-action value")
-            logger.debug("Getting probs")
-            probs = self.problem.random_event_probabilities(state, action)
-            logger.debug("Got probs, getting states and rewards")
+        def get_value_next_state(
+            next_state: chex.Array, values: chex.Array, state_to_idx_fn=state_to_idx_fn
+        ) -> float:
+            """Lookup value of next state in value function from previous iteration."""
+            return values[state_to_idx_fn(next_state)]
+
+        # 1. Base state-action value computation
+        def compute_state_action_value(
+            state,
+            action,
+            random_events,
+            values,
+            gamma,
+            transition_fn=transition_fn,
+            prob_fn=prob_fn,
+            get_value_next_state_fn=get_value_next_state,
+        ):
+            probs = prob_fn(state, action, random_events)
             next_states, rewards = jax.vmap(
-                self.problem.transition,
-                in_axes=(None, None, 0),  # vmap over random events
+                transition_fn,
+                in_axes=(None, None, 0),
             )(state, action, random_events)
-            logger.debug("Got states and rewards, getting next values")
-            next_values = jax.vmap(self._get_value_next_state, in_axes=(0, None))(
+            next_values = jax.vmap(get_value_next_state, in_axes=(0, None))(
                 next_states, values
             )
-            logger.debug("Got next values, computing value")
             q = (rewards + gamma * next_values).dot(probs)
-            logger.debug("Computed Q")
             return q
 
         # Compile state-action value computation (vmap over actions)
         self._compute_state_action_values = jax.jit(
-            jax.vmap(compute_state_action_value, in_axes=(None, 0, None, None, None)),
-            static_argnames=["gamma"],
+            jax.vmap(compute_state_action_value, in_axes=(None, 0, None, None, None))
         )
 
         # 2. Value computation for batches of states
         def compute_batch_values(states, actions, random_events, values, gamma):
-            logger.debug("Computing batch values")
             state_action_values = self._compute_state_action_values(
                 states, actions, random_events, values, gamma
             )
-            logger.debug("Computed state-action values")
             return jnp.max(state_action_values)
 
         # Compile batch value computation (vmap over states)
         self._compute_batch_values = jax.jit(
-            jax.vmap(compute_batch_values, in_axes=(0, None, None, None, None)),
-            static_argnames=["gamma"],
+            jax.vmap(compute_batch_values, in_axes=(0, None, None, None, None))
         )
 
         # 3. Multi-device value computation
         def process_value_device_batch(
             batched_states, actions, random_events, values, gamma
         ):
-            logger.debug("Computing values over a batch of states")
-
             def batch_fn(carry, state_batch):
                 return (carry, self._compute_batch_values(state_batch, *carry))
 
-            logger.debug("Scanning over batches")
             values = jax.lax.scan(
                 batch_fn, (actions, random_events, values, gamma), batched_states
             )[1]
-            logger.debug("Computed values over all the batches")
             return values
 
         # Compile multi-device value computation (pmap includes jit)
         self._compute_values_state_batches = jax.pmap(
             process_value_device_batch,
-            in_axes=(0, None, None, None, None),
-            static_broadcasted_argnums=(4),  # gamma is arg index 4
+            in_axes=(0, None, None, None, None),  # No more static_broadcasted_argnums
         )
 
         # 4. Policy extraction for batches of states
@@ -133,8 +140,7 @@ class ValueIteration(Solver, CheckpointMixin):
 
         # Compile batch policy computation (vmap over states)
         self._extract_batch_policy_idxs = jax.jit(
-            jax.vmap(extract_batch_policy_idxs, in_axes=(0, None, None, None, None)),
-            static_argnames=["gamma"],
+            jax.vmap(extract_batch_policy_idxs, in_axes=(0, None, None, None, None))
         )
 
         # 5. Multi-device policy computation
@@ -151,8 +157,7 @@ class ValueIteration(Solver, CheckpointMixin):
         # Compile multi-device policy computation (pmap includes jit)
         self._extract_policy_idxs_state_batches = jax.pmap(
             process_policy_idxs_device_batch,
-            in_axes=(0, None, None, None, None),
-            static_broadcasted_argnums=(4),
+            in_axes=(0, None, None, None, None),  # No static args
         )
 
     def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
@@ -223,12 +228,6 @@ class ValueIteration(Solver, CheckpointMixin):
         # Look up actual actions from policy
         return jnp.take(self.problem.action_space, policy_action_idxs, axis=0)
 
-    def _get_value_next_state(
-        self, next_state: chex.Array, values: chex.Array
-    ) -> float:
-        """Lookup value of next state in value function from previous iteration."""
-        return values[self.problem.state_to_index(next_state)]
-
     def solve(self) -> SolverState:
         """Run solver to convergence.
 
@@ -280,7 +279,7 @@ class ValueIteration(Solver, CheckpointMixin):
         """Get solver configuration for reconstruction."""
         return ValueIterationConfig(
             problem=self.problem.get_problem_config(),
-            gamma=self.gamma,
+            gamma=float(self.gamma),
             max_iter=self.max_iter,
             epsilon=self.epsilon,
             batch_size=self.batch_size,

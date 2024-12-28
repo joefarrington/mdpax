@@ -141,15 +141,15 @@ class DeMoorPerishable(Problem):
         """Return array of random events, demand between 0 and max_demand."""
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
-    def random_event_probabilities(
-        self, state: jnp.ndarray, action: jnp.ndarray
+    def random_event_probability(
+        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> float:
         """Compute probability of the random event given state and action.
 
         Demand is generated from a gamma distribution with mean demand_gamma_mean
         and CoV demand_gamma_cov and is independent of the state and action.
         """
-        return self.demand_probabilities
+        return self.demand_probabilities[random_event]
 
     def transition(
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray

@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpyro
-from jax import tree_util
 
 # Enable logging
 log = logging.getLogger("ValueIterationRunner")
@@ -124,15 +123,7 @@ class MirjaliliPerishablePlateletProblem:
             (w, *stock) for w, stock in (itertools.product(np.arange(7), stock_states))
         ]
 
-        state_component_idx_dict = {}
-        state_component_idx_dict["weekday"] = 0
-        state_component_idx_dict["stock_start"] = 1
-        state_component_idx_dict["stock_len"] = self.max_useful_life - 1
-        state_component_idx_dict["stock_stop"] = (
-            state_component_idx_dict["stock_start"]
-            + state_component_idx_dict["stock_len"]
-        )
-        return state_tuples, state_component_idx_dict
+        return state_tuples
 
     def create_state_to_idx_mapping(self, state_tuples: List[Tuple]) -> chex.Array:
         """Returns an array that maps from a state (represented as a tuple) to its index
@@ -205,20 +196,12 @@ class MirjaliliPerishablePlateletProblem:
         """Returns the next state and single-step reward for the provided state,
         action and random combination"""
         demand = random_outcome[self.pro_component_idx_dict["demand"]]
-        max_stock_received = random_outcome[
-            self.pro_component_idx_dict["order_start"] : self.pro_component_idx_dict[
-                "order_stop"
-            ]
-        ]
+        max_stock_received = random_outcome[self.event_component_lookup["order"]]
         opening_stock_after_delivery = (
             jnp.hstack(
                 [
                     0,
-                    state[
-                        self.state_component_idx_dict[
-                            "stock_start"
-                        ] : self.state_component_idx_dict["stock_stop"]
-                    ],
+                    state[self.state_component_lookup["stock"]],
                 ]
             )
             + max_stock_received
@@ -250,7 +233,7 @@ class MirjaliliPerishablePlateletProblem:
         )
 
         # Update the weekday
-        next_weekday = (state[self.state_component_idx_dict["weekday"]] + 1) % 7
+        next_weekday = (state[self.state_component_lookup["weekday"]] + 1) % 7
 
         next_state = jnp.hstack([next_weekday, closing_stock]).astype(jnp.int32)
 
@@ -268,13 +251,13 @@ class MirjaliliPerishablePlateletProblem:
     ) -> chex.Array:
         """Returns an array of the probabilities of each possible random outcome for
         the provides state-action pair"""
-        weekday = state[self.state_component_idx_dict["weekday"]]
+        weekday = state[self.state_component_lookup["weekday"]]
         n = self.weekday_demand_negbin_n[weekday]
         p = self.weekday_demand_negbin_p[weekday]
-        # tfd NegBin is distribution over successes until observe
-        # `total_count` failures,
-        # versus MM thesis where distribtion over failures until
-        # certain number of successes
+        # tfd NegBin is distribution over successes until observe `total_count`
+        # failures,
+        # versus MM thesis where distribtion over failures until certain number
+        # of successes
         # Therefore use 1-p for prob (prob of failure is 1 - prob of success)
         demand_dist = numpyro.distributions.NegativeBinomialProbs(
             total_count=n, probs=(1 - p)
@@ -380,31 +363,83 @@ class MirjaliliPerishablePlateletProblem:
         reward = -1 * cost
         return reward
 
-    ### Supporting functions for self._check_converged_periodic() ###
+    def _get_multinomial_logits(self, action: int) -> chex.Array:
+        """Return multinomial logits for a given order quantity action"""
+        c_0 = self.shelf_life_at_arrival_distribution_c_0
+        c_1 = self.shelf_life_at_arrival_distribution_c_1
+        # Assume logit for useful_life=1 is 0, concatenate with logits
+        # for other ages using provided coefficients and order size action
 
-    def _tree_flatten(self):
-        children = (
-            self.weekday_demand_negbin_n,
-            self.weekday_demand_negbin_delta,
-            self.weekday_demand_negbin_p,
-            self.shelf_life_at_arrival_distribution_c_0,
-            self.shelf_life_at_arrival_distribution_c_1,
-            self.cost_components,
-        )  # arrays / dynamic values
-        aux_data = {
-            "max_demand": self.min_demand,
-            "max_useful_life": self.max_useful_life,
-            "max_order_quantity": self.max_order_quantity,
+        # Parameters are provided in ascending remaining shelf life
+        # So reverse to match ordering of stock array which is in
+        # descending order of remaining useful life so that oldest
+        # units are on the RHS
+        return jnp.hstack([0, c_0 + (c_1 * action)])[::-1]
+
+    def _calculate_demand_probabilities(self, weekday: int) -> jnp.ndarray:
+        """Calculate probabilities for each possible demand value.
+
+        Uses negative binomial distribution with weekday-specific parameters.
+        """
+        n = self.weekday_demand_negbin_n[weekday]
+        p = self.weekday_demand_negbin_p[weekday]
+
+        # NegBin distribution over successes until observe `total_count` failures
+        demand_dist = numpyro.distributions.NegativeBinomialProbs(
+            total_count=n, probs=(1 - p)
+        )
+        demand_probs = jnp.exp(demand_dist.log_prob(jnp.arange(0, self.max_demand + 1)))
+
+        # Truncate distribution by adding probability mass for demands > max_demand
+        demand_probs = demand_probs.at[self.max_demand].add(1 - jnp.sum(demand_probs))
+
+        return demand_probs
+
+    def _calculate_received_order_probabilities(
+        self, action: int, possible_receipts: jnp.ndarray
+    ) -> jnp.ndarray:
+        """Calculate probabilities for each possible order receipt combination.
+
+        Uses multinomial distribution with logits based on shelf life parameters.
+        """
+        multinomial_logits = self._get_multinomial_logits(action)
+        dist = numpyro.distributions.Multinomial(
+            logits=multinomial_logits, total_count=action
+        )
+
+        # Only allow combinations that sum to action
+        return jnp.where(
+            possible_receipts.sum(axis=1) == action,
+            jnp.exp(dist.log_prob(possible_receipts)),
+            0,
+        )
+
+    def _construct_state_component_lookup(self) -> Dict[str, Union[int, slice]]:
+        """Return indices or slices for state components.
+
+        Returns
+        -------
+        Dict[str, Union[int, slice]]
+            Maps component names to either:
+            - int: index for single element access
+            - slice: for subarray access
+        """
+        return {
+            "weekday": 0,  # single index
+            "stock": slice(1, self.max_useful_life),  # slice for array
         }
-        return children, aux_data
 
-    @classmethod
-    def _tree_unflatten(cls, aux_data, children):
-        return cls(*children, **aux_data)
+    def _construct_event_component_lookup(self) -> Dict[str, Union[int, slice]]:
+        """Return indices or slices for event components.
 
-
-tree_util.register_pytree_node(
-    MirjaliliPerishablePlateletProblem,
-    MirjaliliPerishablePlateletProblem._tree_flatten,
-    MirjaliliPerishablePlateletProblem._tree_unflatten,
-)
+        Returns
+        -------
+        Dict[str, Union[int, slice]]
+            Maps component names to either:
+            - int: index for single element access
+            - slice: for subarray access
+        """
+        return {
+            "demand": 0,  # single index
+            "order": slice(1, self.max_useful_life + 1),  # slice for array
+        }

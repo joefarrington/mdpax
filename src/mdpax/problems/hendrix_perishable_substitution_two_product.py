@@ -154,7 +154,7 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         )
 
     def random_event_probabilities(
-        self, state: jnp.ndarray, action: jnp.ndarray
+        self, state: jnp.ndarray, action: jnp.ndarray, random_events: jnp.ndarray
     ) -> float:
         """Returns an array of the probabilities of each possible random outcome
         for the provided state-action pair"""
@@ -445,7 +445,9 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
 
     def _calculate_expected_sales_revenue(self, state: chex.Array) -> float:
         """Calculate the expected sales revenue for a given state"""
-        issued_probabilities = self.random_event_probabilities(state, 0)
+        issued_probabilities = self.random_event_probabilities(
+            state, 0, self.random_event_space
+        )
         expected_sales_revenue = issued_probabilities.dot(
             self._calculate_sales_revenue_for_possible_random_outcomes()
         )
