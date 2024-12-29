@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "GPU-accelerated MDP solvers in Python with JAX"
 authors = [{name = "Joe Farrington", email = "farrington.joe@gmail.com"}]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "jax[cuda12]>=0.4.30",
     "pandas>=2.2.3",

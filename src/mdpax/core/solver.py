@@ -2,18 +2,20 @@
 
 import sys
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union
 
 import chex
 import jax
 import jax.numpy as jnp
 from hydra.conf import MISSING, dataclass
+from jaxtyping import Array, Float
 from loguru import logger
 
+from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.batch_processing import BatchProcessor
 from mdpax.utils.logging import verbosity_to_loguru_level
-
-from .problem import Problem, ProblemConfig
+from mdpax.utils.types import (
+    BatchedStates,
+)
 
 
 @dataclass
@@ -41,7 +43,7 @@ class SolverConfig:
 class SolverWithCheckpointConfig(SolverConfig):
     """Configuration for solvers with checkpointing."""
 
-    checkpoint_dir: Optional[str] = None
+    checkpoint_dir: str | None = None
     checkpoint_frequency: int = 0
     max_checkpoints: int = 1
     enable_async_checkpointing: bool = True
@@ -75,8 +77,8 @@ class SolverState:
         info: Solver metadata
     """
 
-    values: chex.Array
-    policy: Optional[chex.Array]
+    values: Float[Array, "n_states"]
+    policy: Float[Array, "n_states action_dim"] | None
     info: SolverInfo
 
 
@@ -86,45 +88,30 @@ class Solver(ABC):
     Provides common functionality for solving MDPs using parallel processing
     across devices with batched state updates.
 
+    Shape Requirements:
+        Values and policies maintain consistent dimensionality:
+        - Values: [n_states]
+        - Policy: [n_states, action_dim]
+        - Batched states: [n_devices, n_batches, batch_size, state_dim]
+
+    Note:
+        All array operations use JAX for efficient parallel processing.
+        States are automatically batched and padded for device distribution.
+
     Args:
         problem: MDP problem to solve
         gamma: Discount factor in [0,1]
         max_iter: Maximum iterations
         epsilon: Convergence threshold
         max_batch_size: Maximum size of state batches
-        jax_double_precision: Whether to use double precision for JAX operations
+        jax_double_precision: Whether to use double precision
         verbose: Verbosity level (0-4)
-            0: Minimal output (only errors)
-            1: Show warnings and errors
-            2: Show main progress (default)
-            3: Show detailed progress
-            4: Show everything
-
-    Attributes:
-        problem: MDP problem being solved
-        gamma: Discount factor
-        max_iter: Maximum iterations
-        epsilon: Convergence threshold
-        max_batch_size: Maximum size of state batches
-        n_devices: Number of available devices
-        values: Current value function [n_states]
-        policy: Current policy (if computed) [n_states, action_dim]
-        iteration: Current iteration count
-        n_pad: Number of padding elements added to make sizes divide evenly
-        batched_states: States prepared for batch processing
-            Shape: [n_devices, n_batches, batch_size, state_dim]
-            where:
-            - n_devices is number of available devices (1 for single device)
-            - n_batches is ceil(n_states / batch_size)
-            - batch_size is min(max_batch_size, n_states) for single device
-              or min(max_batch_size, max(64, n_states/n_devices)) for multiple devices
-            - Padding is added if needed to make sizes divide evenly
     """
 
     def __init__(
         self,
         problem: Problem,
-        gamma: float = 0.9,
+        gamma: float = 0.99,
         max_iter: int = 1000,
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
@@ -160,7 +147,7 @@ class Solver(ABC):
         # and JIT compile functions (as part of pmap)
         self._setup()
 
-    def set_verbosity(self, level: Union[int, str]) -> None:
+    def set_verbosity(self, level: int | str) -> None:
         """Set the verbosity level for solver output.
 
         Args:
@@ -191,7 +178,7 @@ class Solver(ABC):
         logger.debug(f"Verbosity set to {level} ({loguru_level})")
 
     def _setup(self) -> None:
-        """Setup solver computations and JIT compile functions."""
+        """Setup batching and solver computations and JIT compile functions."""
 
         # Set up batch processing
         self.batch_processor = BatchProcessor(
@@ -200,13 +187,13 @@ class Solver(ABC):
             max_batch_size=self.max_batch_size,
         )
 
-        self.batched_states = self.batch_processor.prepare_batches(
+        self.batched_states: BatchedStates = self.batch_processor.prepare_batches(
             self.problem.state_space
         )
 
         # Initialize solver state
-        self.values: Optional[jnp.ndarray] = None
-        self.policy: Optional[jnp.ndarray] = None
+        self.values: Float[Array, "n_states"] | None = None
+        self.policy: Float[Array, "n_states action_dim"] | None = None
         self.iteration: int = 0
 
         self._calculate_initial_value_scan_state_batches_pmap = jax.pmap(
@@ -219,7 +206,9 @@ class Solver(ABC):
         # Initialize values using solver-specific method
         self.values = self._initialize_values(self.batched_states)
 
-    def _initialize_values(self, batched_states: jnp.ndarray) -> jnp.ndarray:
+    def _initialize_values(
+        self, batched_states: BatchedStates
+    ) -> Float[Array, "n_states"]:
         """Initialize value function using problem's initial value function.
 
         Uses pmap with batching to efficiently compute initial values for all states.
@@ -237,8 +226,8 @@ class Solver(ABC):
         return initial_values
 
     def _calculate_initial_value_state_batch(
-        self, carry, state_batch: chex.Array
-    ) -> Tuple[None, chex.Array]:
+        self, carry, state_batch: Float[Array, "batch_size state_dim"]
+    ) -> tuple[None, Float[Array, "batch_size"]]:
         """Calculate the updated value for a batch of states"""
         initial_values = jax.vmap(
             self.problem.initial_value,
@@ -247,10 +236,9 @@ class Solver(ABC):
 
     def _calculate_initial_value_scan_state_batches(
         self,
-        padded_batched_states: chex.Array,
-    ) -> chex.Array:
-        """Calculate the updated value for multiple batches of states, using
-        jax.lax.scan to loop over batches of states."""
+        padded_batched_states: BatchedStates,
+    ) -> Float[Array, "n_devices n_batches batch_size"]:
+        """Calculate the updated value for multiple batches of states"""
 
         _, new_values_padded = jax.lax.scan(
             self._calculate_initial_value_state_batch,
@@ -265,7 +253,7 @@ class Solver(ABC):
         pass
 
     @abstractmethod
-    def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
+    def _iteration_step(self) -> tuple[Float[Array, "n_states"], float]:
         """Perform one iteration step.
 
         Returns:
@@ -274,7 +262,7 @@ class Solver(ABC):
         pass
 
     def solve(self) -> SolverState:
-        """Run solver to convergence.
+        """Run solver to convergence or max iterations.
 
         Returns:
             SolverState containing final values, policy, and solver info
