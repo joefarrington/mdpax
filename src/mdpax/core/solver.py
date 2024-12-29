@@ -142,7 +142,7 @@ class Solver(ABC):
             jax.config.update("jax_enable_x64", True)
 
         self.problem = problem
-        self.gamma = gamma
+        self.gamma = jnp.array(gamma)
         self.max_iter = max_iter
         self.epsilon = epsilon
 

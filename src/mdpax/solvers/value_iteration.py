@@ -50,7 +50,6 @@ class ValueIteration(Solver, CheckpointMixin):
         super().__init__(
             problem, gamma, max_iter, epsilon, batch_size, jax_double_precision, verbose
         )
-        self.gamma = jnp.array(gamma)
         self.setup_checkpointing(
             checkpoint_dir,
             checkpoint_frequency,
@@ -62,103 +61,142 @@ class ValueIteration(Solver, CheckpointMixin):
     def _setup_solver(self) -> None:
         """Setup solver-specific computations."""
         # Cache problem methods at the start
-        transition_fn = self.problem.transition
-        prob_fn = jax.vmap(
-            self.problem.random_event_probability, in_axes=(None, None, 0)
-        )  # vmap over random events
-        state_to_idx_fn = self.problem.state_to_index
 
-        def get_value_next_state(
-            next_state: chex.Array, values: chex.Array, state_to_idx_fn=state_to_idx_fn
-        ) -> float:
-            """Lookup value of next state in value function from previous iteration."""
-            return values[state_to_idx_fn(next_state)]
+        self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
+            self._calculate_updated_value_scan_state_batches,
+            in_axes=((None, None, None, None), 0),
+        )
 
-        # 1. Base state-action value computation
-        def compute_state_action_value(
+        self._extract_policy_idx_scan_state_batches_pmap = jax.pmap(
+            self._extract_policy_idx_scan_state_batches,
+            in_axes=((None, None, None, None), 0),
+        )
+
+    def _get_value_next_state(
+        self, next_state: chex.Array, values: chex.Array
+    ) -> float:
+        """Lookup the value of the next state in the value function from the
+        previous iteration."""
+        return values[self.problem.state_to_index(next_state)]
+
+    def _calculate_updated_state_action_value(
+        self,
+        state: chex.Array,
+        action: Union[int, chex.Array],
+        random_events: chex.Array,
+        gamma: float,
+        values: chex.Array,
+    ) -> float:
+        """Update the state-action value for a given state, action pair"""
+        (
+            next_states,
+            single_step_rewards,
+        ) = jax.vmap(
+            self.problem.transition,
+            in_axes=(None, None, 0),
+        )(
             state,
             action,
             random_events,
-            values,
-            gamma,
-            transition_fn=transition_fn,
-            prob_fn=prob_fn,
-            get_value_next_state_fn=get_value_next_state,
-        ):
-            probs = prob_fn(state, action, random_events)
-            next_states, rewards = jax.vmap(
-                transition_fn,
-                in_axes=(None, None, 0),
-            )(state, action, random_events)
-            next_values = jax.vmap(get_value_next_state, in_axes=(0, None))(
-                next_states, values
-            )
-            q = (rewards + gamma * next_values).dot(probs)
-            return q
+        )
+        next_state_values = jax.vmap(
+            self._get_value_next_state,
+            in_axes=(0, None),
+        )(next_states, values)
+        probs = jax.vmap(
+            self.problem.random_event_probability,
+            in_axes=(None, None, 0),
+        )(state, action, random_events)
+        new_state_action_value = (single_step_rewards + gamma * next_state_values).dot(
+            probs
+        )
+        return new_state_action_value
 
-        # Compile state-action value computation (vmap over actions)
-        self._compute_state_action_values = jax.jit(
-            jax.vmap(compute_state_action_value, in_axes=(None, 0, None, None, None))
+    def _calculate_updated_value(
+        self,
+        state: chex.Array,
+        actions: Union[int, chex.Array],
+        random_events: chex.Array,
+        gamma: float,
+        values: chex.Array,
+    ) -> float:
+        """Update the value for a given state, by taking the max of the
+          updated state-action
+        values over all actions"""
+        return jnp.max(
+            jax.vmap(
+                self._calculate_updated_state_action_value,
+                in_axes=(None, 0, None, None, None),
+            )(state, actions, random_events, gamma, values)
         )
 
-        # 2. Value computation for batches of states
-        def compute_batch_values(states, actions, random_events, values, gamma):
-            state_action_values = self._compute_state_action_values(
-                states, actions, random_events, values, gamma
-            )
-            return jnp.max(state_action_values)
+    def _calculate_updated_value_state_batch(
+        self, carry, state_batch: chex.Array
+    ) -> Tuple[Tuple[Union[int, chex.Array], chex.Array, chex.Array], chex.Array]:
+        """Calculate the updated value for a batch of states"""
+        actions, random_events, gamma, values = carry
+        new_values = jax.vmap(
+            self._calculate_updated_value, in_axes=(0, None, None, None, None)
+        )(state_batch, actions, random_events, gamma, values)
+        return carry, new_values
 
-        # Compile batch value computation (vmap over states)
-        self._compute_batch_values = jax.jit(
-            jax.vmap(compute_batch_values, in_axes=(0, None, None, None, None))
+    def _calculate_updated_value_scan_state_batches(
+        self,
+        carry: Tuple[Union[int, chex.Array], chex.Array, chex.Array],
+        padded_batched_states: chex.Array,
+    ) -> chex.Array:
+        """Calculate the updated value for multiple batches of states, using
+        jax.lax.scan to loop over batches of states."""
+        carry, new_values_padded = jax.lax.scan(
+            self._calculate_updated_value_state_batch,
+            carry,
+            padded_batched_states,
         )
+        return new_values_padded
 
-        # 3. Multi-device value computation
-        def process_value_device_batch(
-            batched_states, actions, random_events, values, gamma
-        ):
-            def batch_fn(carry, state_batch):
-                return (carry, self._compute_batch_values(state_batch, *carry))
-
-            values = jax.lax.scan(
-                batch_fn, (actions, random_events, values, gamma), batched_states
-            )[1]
-            return values
-
-        # Compile multi-device value computation (pmap includes jit)
-        self._compute_values_state_batches = jax.pmap(
-            process_value_device_batch,
-            in_axes=(0, None, None, None, None),  # No more static_broadcasted_argnums
+    def _extract_policy_idx_one_state(
+        self,
+        state: chex.Array,
+        actions: Union[int, chex.Array],
+        random_events: chex.Array,
+        gamma: float,
+        values: chex.Array,
+    ) -> int:
+        """Extract the best action for a single state, by taking the argmax of the
+        updated state-action values over all actions"""
+        best_action_idx = jnp.argmax(
+            jax.vmap(
+                self._calculate_updated_state_action_value,
+                in_axes=(None, 0, None, None, None),
+            )(state, actions, random_events, gamma, values)
         )
+        return best_action_idx
 
-        # 4. Policy extraction for batches of states
-        def extract_batch_policy_idxs(states, actions, random_events, values, gamma):
-            state_action_values = self._compute_state_action_values(
-                states, actions, random_events, values, gamma
-            )
-            return jnp.argmax(state_action_values)
+    def _extract_policy_idx_state_batch(
+        self,
+        carry: Tuple[Union[int, chex.Array], chex.Array, chex.Array],
+        state_batch: chex.Array,
+    ) -> chex.Array:
+        """Extract the best action for a batch of states"""
+        actions, random_events, gamma, values = carry
+        best_action_idxs = jax.vmap(
+            self._extract_policy_idx_one_state, in_axes=(0, None, None, None, None)
+        )(state_batch, actions, random_events, gamma, values)
+        return carry, best_action_idxs
 
-        # Compile batch policy computation (vmap over states)
-        self._extract_batch_policy_idxs = jax.jit(
-            jax.vmap(extract_batch_policy_idxs, in_axes=(0, None, None, None, None))
+    def _extract_policy_idx_scan_state_batches(
+        self,
+        carry: Tuple[Union[int, chex.Array], chex.Array, chex.Array],
+        padded_batched_states: chex.Array,
+    ) -> chex.Array:
+        """Extract the best action for multiple batches of states, using jax.lax.scan
+        o loop over batches of states."""
+        carry, best_action_idxs_padded = jax.lax.scan(
+            self._extract_policy_idx_state_batch,
+            carry,
+            padded_batched_states,
         )
-
-        # 5. Multi-device policy computation
-        def process_policy_idxs_device_batch(
-            batched_states, actions, random_events, values, gamma
-        ):
-            def batch_fn(carry, state_batch):
-                return (carry, self._extract_batch_policy_idxs(state_batch, *carry))
-
-            return jax.lax.scan(
-                batch_fn, (actions, random_events, values, gamma), batched_states
-            )[1]
-
-        # Compile multi-device policy computation (pmap includes jit)
-        self._extract_policy_idxs_state_batches = jax.pmap(
-            process_policy_idxs_device_batch,
-            in_axes=(0, None, None, None, None),  # No static args
-        )
+        return best_action_idxs_padded
 
     def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
         """Perform one iteration step.
@@ -174,8 +212,8 @@ class ValueIteration(Solver, CheckpointMixin):
             self.batched_states,  # Shape could vary
             self.problem.action_space,
             self.problem.random_event_space,
-            self.values,
             self.gamma,
+            self.values,
         )
         # Compute convergence measure
         conv = jnp.max(jnp.abs(new_values - self.values))
@@ -187,13 +225,13 @@ class ValueIteration(Solver, CheckpointMixin):
         batched_states: jnp.ndarray,
         actions: jnp.ndarray,
         random_events: jnp.ndarray,
-        values: jnp.ndarray,
         gamma: float,
+        values: jnp.ndarray,
     ) -> jnp.ndarray:
         """Update values for a batch of states."""
         logger.debug("Starting update_values")
-        padded_batched_values = self._compute_values_state_batches(
-            batched_states, actions, random_events, values, gamma
+        padded_batched_values = self._calculate_updated_value_scan_state_batches_pmap(
+            (actions, random_events, gamma, values), batched_states
         )
         logger.debug("Computed padded batched values")
         padded_values = jnp.reshape(padded_batched_values, (-1,))
@@ -210,12 +248,16 @@ class ValueIteration(Solver, CheckpointMixin):
         """Extract policy from values."""
 
         # Multi-device policy extraction
-        padded_batched_policy_action_idxs = self._extract_policy_idxs_state_batches(
-            self.batched_states,
-            self.problem.action_space,
-            self.problem.random_event_space,
-            self.values,
-            self.gamma,
+        padded_batched_policy_action_idxs = (
+            self._extract_policy_idx_scan_state_batches_pmap(
+                (
+                    self.problem.action_space,
+                    self.problem.random_event_space,
+                    self.gamma,
+                    self.values,
+                ),
+                self.batched_states,
+            )
         )
 
         padded_policy_action_idxs = jnp.reshape(

@@ -133,8 +133,8 @@ class PeriodicValueIteration(ValueIteration):
             self.batched_states,
             self.problem.action_space,
             self.problem.random_event_space,
-            self.values,
             self.gamma,
+            self.values,
         )
         # Store values in history (CPU)
         self.history_index = (self.history_index + 1) % (self.period + 1)

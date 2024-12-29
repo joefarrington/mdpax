@@ -459,6 +459,10 @@ class NewValueIterationRunner:
         V_old: chex.Array,
     ) -> float:
         """Update the state-action value for a given state, action pair"""
+        logger.info(
+            f"Calculating updated state-action value\
+                  for state {state} and action {action}"
+        )
         (
             next_states,
             single_step_rewards,
