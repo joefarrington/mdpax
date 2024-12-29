@@ -174,13 +174,13 @@ class Solver(ABC):
         self.values: Optional[jnp.ndarray] = None
         self.policy: Optional[jnp.ndarray] = None
         self.iteration: int = 0
-        self.n_pad: int = 0
-        self.batched_states: jnp.ndarray = None  # Will be set in _setup_processing
+        self.n_pad: int = 0  # Will be set in _setup_batch_processing
+        self.batched_states: jnp.ndarray = (
+            None  # Will be set in _setup_batch_processing
+        )
 
-        # Setup processing based on problem size and devices
-        self._setup_processing()
-
-        # Setup solver-specific structures and JIT compile functions
+        # Setup batch processing and solver-specific structures
+        # and JIT compile functions (as part of pmap)
         self._setup()
 
         # Initialize values using solver-specific method
@@ -218,16 +218,10 @@ class Solver(ABC):
 
     def _setup(self) -> None:
         """Setup solver computations and JIT compile functions."""
-        # JIT compile initial value computation
-        self._compute_initial_values_vmap_states = jax.jit(
-            jax.vmap(self.problem.initial_value)
-        )
+        self._setup_batch_processing()
 
-        # Setup scan for initialization using pmap
-        self._compute_initial_values_scan_batches_pmap_state_batches = jax.pmap(
-            self._compute_initial_values_scan_batches,
-            in_axes=(0,),  # batched_states
-            axis_name="device",
+        self._calculate_initial_value_scan_state_batches_pmap = jax.pmap(
+            self._calculate_initial_value_scan_state_batches, in_axes=0
         )
 
         # Setup other solver-specific computations
@@ -242,26 +236,37 @@ class Solver(ABC):
             Array of initial values for all states [n_states]
         """
         # Multi-device initialization using scan and pmap
-        device_values = self._compute_initial_values_scan_batches_pmap_state_batches(
-            batched_states
+        padded_batched_initial_values = (
+            self._calculate_initial_value_scan_state_batches_pmap(batched_states)
         )
-        values = jnp.reshape(device_values, (-1,))
+        padded_initial_values = jnp.reshape(padded_batched_initial_values, (-1,))
 
-        # Remove padding if needed
-        values = self._unpad_results(values)
+        initial_values = self._unpad_results(padded_initial_values)
 
-        return values
-
-    def _compute_initial_values_scan_batches(
-        self, batched_states: jnp.ndarray
-    ) -> jnp.ndarray:
-        """Compute initial values for all states using scan and pmap."""
-
-        def scan_fn(_, batch):
-            return (None, self._compute_initial_values_vmap_states(batch))
-
-        _, initial_values = jax.lax.scan(scan_fn, None, batched_states)
         return initial_values
+
+    def _calculate_initial_value_state_batch(
+        self, carry, state_batch: chex.Array
+    ) -> Tuple[None, chex.Array]:
+        """Calculate the updated value for a batch of states"""
+        initial_values = jax.vmap(
+            self.problem.initial_value,
+        )(state_batch)
+        return carry, initial_values
+
+    def _calculate_initial_value_scan_state_batches(
+        self,
+        padded_batched_states: chex.Array,
+    ) -> chex.Array:
+        """Calculate the updated value for multiple batches of states, using
+        jax.lax.scan to loop over batches of states."""
+
+        _, new_values_padded = jax.lax.scan(
+            self._calculate_initial_value_state_batch,
+            None,
+            padded_batched_states,
+        )
+        return new_values_padded
 
     @abstractmethod
     def _setup_solver(self) -> None:
@@ -300,7 +305,7 @@ class Solver(ABC):
             info=SolverInfo(iteration=self.iteration),
         )
 
-    def _setup_processing(self) -> None:
+    def _setup_batch_processing(self) -> None:
         """Setup batch processing based on problem size and devices.
 
         Always reshapes states to (n_devices, n_batches, batch_size, state_dim) where:

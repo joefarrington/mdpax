@@ -204,10 +204,6 @@ class ValueIteration(Solver, CheckpointMixin):
         Returns:
             Tuple of (new values, convergence measure)
         """
-        logger.debug(
-            f"Starting iteration step with values shape {self.values.shape} "
-            f"and batched_states shape {self.batched_states.shape}"
-        )
         new_values = self._update_values(
             self.batched_states,  # Shape could vary
             self.problem.action_space,
@@ -217,7 +213,6 @@ class ValueIteration(Solver, CheckpointMixin):
         )
         # Compute convergence measure
         conv = jnp.max(jnp.abs(new_values - self.values))
-        logger.debug("Completed iteration step")
         return new_values, conv
 
     def _update_values(
@@ -229,17 +224,11 @@ class ValueIteration(Solver, CheckpointMixin):
         values: jnp.ndarray,
     ) -> jnp.ndarray:
         """Update values for a batch of states."""
-        logger.debug("Starting update_values")
         padded_batched_values = self._calculate_updated_value_scan_state_batches_pmap(
             (actions, random_events, gamma, values), batched_states
         )
-        logger.debug("Computed padded batched values")
         padded_values = jnp.reshape(padded_batched_values, (-1,))
-        logger.debug("Reshaped padded values")
-        # Remove padding if needed
         new_values = self._unpad_results(padded_values)
-        logger.debug("Unpadded values")
-        logger.debug("Finished update_values")
         return new_values
 
     def _extract_policy(
@@ -279,7 +268,6 @@ class ValueIteration(Solver, CheckpointMixin):
 
         while self.iteration < self.max_iter:
             self.iteration += 1
-            logger.debug(f"Values shape: {self.values.shape}")
             # Perform iteration step
             new_values, conv = self._iteration_step()
 
