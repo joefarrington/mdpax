@@ -48,6 +48,20 @@ class ValueIteration(Solver, CheckpointMixin):
 
     Note:
         Supports checkpointing for long-running problems.
+
+    Args:
+        problem: MDP problem to solve
+        gamma: Discount factor in [0,1]
+        max_iter: Maximum number of iterations to run
+        epsilon: Convergence threshold for value changes
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        verbose: Logging verbosity level (0-4)
+        checkpoint_dir: Directory to store checkpoints
+        checkpoint_frequency: How often to save checkpoints (0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep
+        enable_async_checkpointing: Whether to save checkpoints asynchronously
+
     """
 
     def __init__(
@@ -58,11 +72,11 @@ class ValueIteration(Solver, CheckpointMixin):
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
+        verbose: int = 2,
         checkpoint_dir: str | Path | None = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
         enable_async_checkpointing: bool = True,
-        verbose: int = 2,
     ):
         """Initialize the solver."""
         super().__init__(
@@ -308,6 +322,8 @@ class ValueIteration(Solver, CheckpointMixin):
             self.gamma,
             self.values,
         )
+
+        # Calculate convergence measure, max absolute difference in values
         conv = jnp.max(jnp.abs(new_values - self.values))
         return new_values, conv
 
@@ -345,7 +361,7 @@ class ValueIteration(Solver, CheckpointMixin):
         return jnp.take(self.problem.action_space, policy_idxs, axis=0)
 
     def solve(self) -> SolverState:
-        """Run value iteration to convergence or max iterations.
+        """Run value iteration.
 
         Performs synchronous value iteration updates until either:
         1. The maximum change in values is below epsilon
@@ -379,6 +395,7 @@ class ValueIteration(Solver, CheckpointMixin):
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
 
+        # Final checkpoint if enabled
         if self.is_checkpointing_enabled:
             self.save(self.iteration)
 

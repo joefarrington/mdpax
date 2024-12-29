@@ -66,14 +66,32 @@ class PeriodicValueIterationState(SolverState):
 class PeriodicValueIteration(ValueIteration):
     """Value iteration solver that checks for convergence over a specified period.
 
-    This solver extends standard value iteration to handle problems where the
-    value function may oscillate with a known period rather than converging
-    to a single value. This is particularly useful for problems with periodic
-    structure in the state space.
+    This is particularly useful for problems with periodic
+    structure in the state space, where it may require fewer iterations
+    to reach convergence than standard value iteration.
 
     For discounted problems (gamma < 1), it accounts for discounting when comparing
     values across periods. For undiscounted problems (gamma = 1), it directly
     compares values separated by one period.
+
+    Notes:
+        Supports checkpointing for long-running problems.
+
+    Args:
+        problem: MDP problem to solve
+        period: Number of iterations to check for periodic convergence
+        gamma: Discount factor in [0,1]
+        max_iter: Maximum number of iterations to run
+        epsilon: Convergence threshold for value changes
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        verbose: Logging verbosity level (0-4)
+        checkpoint_dir: Directory to store checkpoints
+        checkpoint_frequency: How often to save checkpoints (0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep
+        enable_async_checkpointing: Whether to save checkpoints asynchronously
+        clear_value_history_on_convergence: Whether to clear value history
+            after the algorithm converges
     """
 
     def __init__(
@@ -185,7 +203,8 @@ class PeriodicValueIteration(ValueIteration):
         """Run periodic value iteration to convergence.
 
         Performs synchronous value iteration updates until either:
-        1. The span of period deltas is below epsilon
+        1. The span between current value function estimate and value function
+            estimate one period ago is below epsilon
         2. The maximum number of iterations is reached
 
         Returns:
@@ -197,8 +216,6 @@ class PeriodicValueIteration(ValueIteration):
         while self.iteration < self.max_iter:
             self.iteration += 1
             new_values, conv = self._iteration_step()
-
-            # Update values and iteration count
             self.values = new_values
 
             logger.info(f"Iteration {self.iteration}: delta_diff: {conv:.4f}")
@@ -210,7 +227,6 @@ class PeriodicValueIteration(ValueIteration):
                 )
                 break
 
-            # Save checkpoint if enabled
             if (
                 self.is_checkpointing_enabled
                 and self.iteration % self.checkpoint_frequency == 0
@@ -220,6 +236,7 @@ class PeriodicValueIteration(ValueIteration):
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
 
+        # Final checkpoint if enabled
         if self.is_checkpointing_enabled:
             self.save(self.iteration)
 
@@ -229,7 +246,8 @@ class PeriodicValueIteration(ValueIteration):
         logger.info("Policy extracted")
 
         logger.success("Periodic value iteration completed")
-        self._clear_value_history()
+        if conv < self.epsilon:
+            self._clear_value_history()
         return self.solver_state
 
     def _calculate_period_deltas_without_discount(

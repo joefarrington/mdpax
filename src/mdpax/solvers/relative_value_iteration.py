@@ -64,6 +64,19 @@ class RelativeValueIteration(ValueIteration):
 
     Note:
         Supports checkpointing for long-running problems.
+
+
+     Args:
+        problem: MDP problem to solve
+        max_iter: Maximum number of iterations to run
+        epsilon: Convergence threshold for value changes
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        checkpoint_dir: Directory to store checkpoints
+        checkpoint_frequency: How often to save checkpoints (0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep
+        enable_async_checkpointing: Whether to save checkpoints asynchronously
+        verbose: Logging verbosity level (0-4)
     """
 
     def __init__(
@@ -115,7 +128,7 @@ class RelativeValueIteration(ValueIteration):
 
         # Update gain using maximum difference
         max_diff = jnp.max(value_diffs)
-        self.gain = max_diff  # Set gain to maximum difference
+        self.gain = max_diff
 
         # Subtract gain from new values
         new_values = new_values - self.gain
@@ -126,7 +139,7 @@ class RelativeValueIteration(ValueIteration):
         return new_values, span
 
     def solve(self) -> RelativeValueIterationState:
-        """Run relative value iteration to convergence.
+        """Run relative value iteration.
 
         Performs synchronous value iteration updates until either:
         1. The span of value differences is below epsilon
@@ -136,15 +149,11 @@ class RelativeValueIteration(ValueIteration):
             SolverState containing:
                 - Final values [n_states]
                 - Optimal policy [n_states, action_dim]
-                - Solver info including gain term
+                - Solver info including iteration count and gain term
         """
         while self.iteration < self.max_iter:
             self.iteration += 1
-
-            # Perform iteration step
             new_values, conv = self._iteration_step()
-
-            # Update values and iteration count
             self.values = new_values
 
             logger.info(
@@ -157,7 +166,6 @@ class RelativeValueIteration(ValueIteration):
                 )
                 break
 
-            # Save checkpoint if enabled
             if (
                 self.is_checkpointing_enabled
                 and self.iteration % self.checkpoint_frequency == 0
@@ -167,6 +175,7 @@ class RelativeValueIteration(ValueIteration):
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
 
+        # Final checkpoint if enabled
         if self.is_checkpointing_enabled:
             self.save(self.iteration)
 

@@ -106,11 +106,11 @@ class Solver(ABC):
     Args:
         problem: MDP problem to solve
         gamma: Discount factor in [0,1]
-        max_iter: Maximum iterations
+        max_iter: Maximum number of iterations to run
         epsilon: Convergence threshold
-        max_batch_size: Maximum size of state batches
-        jax_double_precision: Whether to use double precision
-        verbose: Verbosity level (0-4)
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        verbose: Logging verbosity level (0-4)
     """
 
     def __init__(
