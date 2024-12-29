@@ -240,7 +240,7 @@ class DeMoorPerishable(Problem):
     ### Supporting functions for self.transition() ###
     ################################################################
 
-    def _construct_state_component_lookup(self) -> dict[str, int]:
+    def _construct_state_component_lookup(self) -> dict[str, int | slice]:
         """Build dictionary that maps from named state components to index or slice"""
 
         return {

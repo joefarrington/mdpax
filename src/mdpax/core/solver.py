@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from hydra.conf import MISSING, dataclass
 from loguru import logger
 
+from mdpax.utils.batch_processing import BatchProcessor
 from mdpax.utils.logging import verbosity_to_loguru_level
 
 from .problem import Problem, ProblemConfig
@@ -31,7 +32,7 @@ class SolverConfig:
     gamma: float = 0.99
     max_iter: int = 1000
     epsilon: float = 1e-3
-    batch_size: int = 1024
+    max_batch_size: int = 1024
     jax_double_precision: bool = True
     verbose: int = 2  # Default to INFO level
 
@@ -90,7 +91,7 @@ class Solver(ABC):
         gamma: Discount factor in [0,1]
         max_iter: Maximum iterations
         epsilon: Convergence threshold
-        batch_size: Size of state batches
+        max_batch_size: Maximum size of state batches
         jax_double_precision: Whether to use double precision for JAX operations
         verbose: Verbosity level (0-4)
             0: Minimal output (only errors)
@@ -104,7 +105,7 @@ class Solver(ABC):
         gamma: Discount factor
         max_iter: Maximum iterations
         epsilon: Convergence threshold
-        batch_size: Size of state batches
+        max_batch_size: Maximum size of state batches
         n_devices: Number of available devices
         values: Current value function [n_states]
         policy: Current policy (if computed) [n_states, action_dim]
@@ -115,8 +116,8 @@ class Solver(ABC):
             where:
             - n_devices is number of available devices (1 for single device)
             - n_batches is ceil(n_states / batch_size)
-            - batch_size is min(batch_size, n_states) for single device
-              or min(batch_size, max(64, n_states/n_devices)) for multiple devices
+            - batch_size is min(max_batch_size, n_states) for single device
+              or min(max_batch_size, max(64, n_states/n_devices)) for multiple devices
             - Padding is added if needed to make sizes divide evenly
     """
 
@@ -126,7 +127,7 @@ class Solver(ABC):
         gamma: float = 0.9,
         max_iter: int = 1000,
         epsilon: float = 1e-3,
-        batch_size: int = 1024,
+        max_batch_size: int = 1024,
         jax_double_precision: bool = True,
         verbose: int = 2,
     ):
@@ -135,12 +136,13 @@ class Solver(ABC):
         assert 0 <= gamma <= 1, "Discount factor must be in [0,1]"
         assert max_iter > 0, "Max iterations must be positive"
         assert epsilon > 0, "Epsilon must be positive"
-        assert batch_size > 0, "Batch size must be positive"
+        assert max_batch_size > 0, "Batch size must be positive"
 
         self.jax_double_precision = jax_double_precision
         if self.jax_double_precision:
             jax.config.update("jax_enable_x64", True)
 
+        self.max_batch_size = max_batch_size
         self.problem = problem
         self.gamma = jnp.array(gamma)
         self.max_iter = max_iter
@@ -154,37 +156,9 @@ class Solver(ABC):
         logger.debug(f"Number of actions: {problem.n_actions}")
         logger.debug(f"Number of random events: {problem.n_random_events}")
 
-        # Setup device information
-        self.n_devices = len(jax.devices())
-
-        # Calculate appropriate batch size
-        if self.n_devices == 1:
-            # Single device - clip to problem size and max batch
-            self.batch_size = min(batch_size, problem.n_states)
-        else:
-            # Multiple devices - ensure even distribution
-            states_per_device = problem.n_states // self.n_devices
-            self.batch_size = min(
-                batch_size,  # user provided/default max
-                max(64, states_per_device),  # ensure minimum batch size
-            )
-        logger.debug(f"Number of devices: {self.n_devices}")
-
-        # Initialize solver state
-        self.values: Optional[jnp.ndarray] = None
-        self.policy: Optional[jnp.ndarray] = None
-        self.iteration: int = 0
-        self.n_pad: int = 0  # Will be set in _setup_batch_processing
-        self.batched_states: jnp.ndarray = (
-            None  # Will be set in _setup_batch_processing
-        )
-
         # Setup batch processing and solver-specific structures
         # and JIT compile functions (as part of pmap)
         self._setup()
-
-        # Initialize values using solver-specific method
-        self.values = self._initialize_values(self.batched_states)
 
     def set_verbosity(self, level: Union[int, str]) -> None:
         """Set the verbosity level for solver output.
@@ -218,7 +192,22 @@ class Solver(ABC):
 
     def _setup(self) -> None:
         """Setup solver computations and JIT compile functions."""
-        self._setup_batch_processing()
+
+        # Set up batch processing
+        self.batch_processor = BatchProcessor(
+            n_states=self.problem.n_states,
+            state_dim=self.problem.state_space.shape[1],
+            max_batch_size=self.max_batch_size,
+        )
+
+        self.batched_states = self.batch_processor.prepare_batches(
+            self.problem.state_space
+        )
+
+        # Initialize solver state
+        self.values: Optional[jnp.ndarray] = None
+        self.policy: Optional[jnp.ndarray] = None
+        self.iteration: int = 0
 
         self._calculate_initial_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_initial_value_scan_state_batches, in_axes=0
@@ -226,6 +215,9 @@ class Solver(ABC):
 
         # Setup other solver-specific computations
         self._setup_solver()
+
+        # Initialize values using solver-specific method
+        self.values = self._initialize_values(self.batched_states)
 
     def _initialize_values(self, batched_states: jnp.ndarray) -> jnp.ndarray:
         """Initialize value function using problem's initial value function.
@@ -239,9 +231,8 @@ class Solver(ABC):
         padded_batched_initial_values = (
             self._calculate_initial_value_scan_state_batches_pmap(batched_states)
         )
-        padded_initial_values = jnp.reshape(padded_batched_initial_values, (-1,))
 
-        initial_values = self._unpad_results(padded_initial_values)
+        initial_values = self._unbatch_results(padded_batched_initial_values)
 
         return initial_values
 
@@ -305,48 +296,21 @@ class Solver(ABC):
             info=SolverInfo(iteration=self.iteration),
         )
 
-    def _setup_batch_processing(self) -> None:
-        """Setup batch processing based on problem size and devices.
+    def _unbatch_results(self, padded_array: jnp.ndarray) -> jnp.ndarray:
+        """Reshape and remove padding from results."""
+        return self.batch_processor.unbatch_results(padded_array)
 
-        Always reshapes states to (n_devices, n_batches, batch_size, state_dim) where:
-        - n_devices is number of available devices (1 for single device)
-        - n_batches is 1 if problem size <= batch_size
-        - Padding is added if needed to make sizes divide evenly
+    @property
+    def n_devices(self) -> int:
+        """Number of available devices."""
+        return self.batch_processor.n_devices
 
-        Uses pmap for all cases for consistency, which handles single-device
-        case automatically.
-        """
-        states = self.problem.state_space
-        state_dim = states.shape[1]
-        n_states = len(states)
+    @property
+    def batch_size(self) -> int:
+        """Actual batch size being used."""
+        return self.batch_processor.batch_size
 
-        # Determine batch dimensions
-        if n_states <= self.batch_size:
-            # Small problem - single batch
-            n_batches = 1
-            actual_batch_size = n_states
-        else:
-            # Multiple batches needed
-            n_batches = (n_states + self.batch_size - 1) // self.batch_size
-            actual_batch_size = self.batch_size
-
-        # Calculate padding needed
-        total_size = self.n_devices * n_batches * actual_batch_size
-        self.n_pad = total_size - n_states
-
-        # Pad if needed
-        if self.n_pad > 0:
-            states = jnp.vstack(
-                [states, jnp.zeros((self.n_pad, state_dim), dtype=states.dtype)]
-            )
-
-        # Reshape to standard format: (devices, batches, batch_size, state_dim)
-        self.batched_states = states.reshape(
-            self.n_devices, n_batches, actual_batch_size, state_dim
-        )
-
-    def _unpad_results(self, padded_array: jnp.ndarray) -> jnp.ndarray:
-        """Remove padding from results if needed."""
-        if self.n_pad > 0:
-            return padded_array[: -self.n_pad]
-        return padded_array
+    @property
+    def n_pad(self) -> int:
+        """Number of padding elements added."""
+        return self.batch_processor.n_pad

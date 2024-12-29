@@ -169,20 +169,9 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     ) -> float:
         """Returns an array of the probabilities of the random event
         for the provided state-action pair"""
-        stock_a = jnp.sum(
-            jax.lax.dynamic_slice(
-                state,
-                (self.state_component_lookup["stock_a"][0],),
-                (self.state_component_lookup["stock_a"][1],),
-            )
-        )
-        stock_b = jnp.sum(
-            jax.lax.dynamic_slice(
-                state,
-                (self.state_component_lookup["stock_b"][0],),
-                (self.state_component_lookup["stock_b"][1],),
-            )
-        )
+        stock_a = jnp.sum(state[self.state_component_lookup["stock_a"]])
+        stock_b = jnp.sum(state[self.state_component_lookup["stock_b"]])
+
         # Issued a less than stock of a, issued b less than stock of b
         probs_1 = self._get_probs_ia_lt_stock_a_ib_lt_stock_b(stock_a, stock_b)
         # Issued a equal to stock of a, issued b less than stock of b
@@ -202,16 +191,8 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     ) -> Tuple[chex.Array, float]:
         """Returns the next state and single-step reward for the provided
         state, action and random event"""
-        opening_stock_a = jax.lax.dynamic_slice(
-            state,
-            (self.state_component_lookup["stock_a"][0],),
-            (self.state_component_lookup["stock_a"][1],),
-        )
-        opening_stock_b = jax.lax.dynamic_slice(
-            state,
-            (self.state_component_lookup["stock_b"][0],),
-            (self.state_component_lookup["stock_b"][1],),
-        )
+        opening_stock_a = state[self.state_component_lookup["stock_a"]]
+        opening_stock_b = state[self.state_component_lookup["stock_b"]]
 
         issued_a = random_event[self.event_component_lookup["issued_a"]]
         issued_b = random_event[self.event_component_lookup["issued_b"]]
@@ -277,13 +258,13 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     ### Supporting functions for self.transition() ###
     ##################################################
 
-    def _construct_state_component_lookup(self) -> dict[str, tuple[int, int]]:
+    def _construct_state_component_lookup(self) -> dict[str, int | slice]:
         """Returns a dictionary mapping component names to (start, length)
         tuples for slicing."""
         m = self.max_useful_life
         return {
-            "stock_a": (0, m),  # (start, length) for dynamic_slice
-            "stock_b": (m, m),  # (start, length) for dynamic_slice
+            "stock_a": slice(0, m),
+            "stock_b": slice(m, 2 * m),
         }
 
     def _construct_event_component_lookup(self) -> dict[str, int]:
@@ -348,8 +329,6 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
 
         return pu
 
-    #
-    # TODO: Could try to rewrite for speed, but only runs once
     def _calculate_pz(self) -> np.ndarray:
         """Returns an array of the conditional probabilities of total demand
         for a given that demand for b is at least equal to total demand for b.

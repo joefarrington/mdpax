@@ -227,8 +227,7 @@ class ValueIteration(Solver, CheckpointMixin):
         padded_batched_values = self._calculate_updated_value_scan_state_batches_pmap(
             (actions, random_events, gamma, values), batched_states
         )
-        padded_values = jnp.reshape(padded_batched_values, (-1,))
-        new_values = self._unpad_results(padded_values)
+        new_values = self._unbatch_results(padded_batched_values)
         return new_values
 
     def _extract_policy(
@@ -249,12 +248,7 @@ class ValueIteration(Solver, CheckpointMixin):
             )
         )
 
-        padded_policy_action_idxs = jnp.reshape(
-            padded_batched_policy_action_idxs, (-1,)
-        )
-
-        # Remove padding if needed
-        policy_action_idxs = self._unpad_results(padded_policy_action_idxs)
+        policy_action_idxs = self._unbatch_results(padded_batched_policy_action_idxs)
 
         # Look up actual actions from policy
         return jnp.take(self.problem.action_space, policy_action_idxs, axis=0)

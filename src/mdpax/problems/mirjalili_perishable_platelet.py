@@ -350,7 +350,7 @@ class MirjaliliPerishablePlatelet(Problem):
     ### Supporting functions for self.transition() ###
     ###############################################################
 
-    def _construct_state_component_lookup(self) -> Dict[str, Union[int, slice]]:
+    def _construct_state_component_lookup(self) -> Dict[str, int | slice]:
         """Return indices or slices for state components.
 
         Returns
@@ -365,7 +365,7 @@ class MirjaliliPerishablePlatelet(Problem):
             "stock": slice(1, self.max_useful_life),  # slice for array
         }
 
-    def _construct_event_component_lookup(self) -> Dict[str, Union[int, slice]]:
+    def _construct_event_component_lookup(self) -> Dict[str, int | slice]:
         """Return indices or slices for event components.
 
         Returns
