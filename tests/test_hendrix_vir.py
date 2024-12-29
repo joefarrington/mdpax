@@ -29,10 +29,10 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = HendrixPerishableSubstitutionTwoProduct()
-        vi_runner = RelativeValueIteration(
-            problem, batch_size=5000, epsilon=1e-4, max_iter=100
+        solver = RelativeValueIteration(
+            problem, max_batch_size=5000, epsilon=1e-4, max_iter=100
         )
-        result = vi_runner.solve()
+        result = solver.solve()
         policy = np.array(result.policy)
         # Load in the reported policy
         reported_policy = pd.read_csv(

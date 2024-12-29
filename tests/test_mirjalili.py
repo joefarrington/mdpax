@@ -26,11 +26,16 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = MirjaliliPerishablePlatelet()
-        vi_runner = PeriodicValueIteration(
-            problem, period=7, batch_size=200, gamma=0.95, epsilon=1e-4, max_iter=30
+        solver = PeriodicValueIteration(
+            problem,
+            gamma=0.95,
+            max_iter=30,
+            period=7,
+            max_batch_size=5000,
+            epsilon=1e-4,
         )
-        result = vi_runner.solve()
-        policy = result.policy
+        result = solver.solve()
+        policy = result.policy.reshape(-1)
         # Load in the reported policy
         reported_policy = pd.read_csv(
             f"{shared_datadir}/{reported_policy_filename}",

@@ -38,7 +38,7 @@ class ValueIteration(Solver, CheckpointMixin):
         gamma: float = 0.99,
         max_iter: int = 1000,
         epsilon: float = 1e-3,
-        batch_size: int = 1024,
+        max_batch_size: int = 1024,
         jax_double_precision: bool = True,
         checkpoint_dir: Optional[Union[str, Path]] = None,
         checkpoint_frequency: int = 0,
@@ -48,7 +48,13 @@ class ValueIteration(Solver, CheckpointMixin):
     ):
         """Initialize the solver."""
         super().__init__(
-            problem, gamma, max_iter, epsilon, batch_size, jax_double_precision, verbose
+            problem,
+            gamma,
+            max_iter,
+            epsilon,
+            max_batch_size,
+            jax_double_precision,
+            verbose,
         )
         self.setup_checkpointing(
             checkpoint_dir,
@@ -306,7 +312,7 @@ class ValueIteration(Solver, CheckpointMixin):
             gamma=float(self.gamma),
             max_iter=self.max_iter,
             epsilon=self.epsilon,
-            batch_size=self.batch_size,
+            max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,
             checkpoint_dir=self.checkpoint_dir,
             checkpoint_frequency=self.checkpoint_frequency,

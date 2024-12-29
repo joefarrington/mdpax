@@ -141,7 +141,10 @@ class MirjaliliPerishablePlatelet(Problem):
 
         self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
         self.state_component_lookup = self._construct_state_component_lookup()
-        self.event_component_lookup = self._construct_event_component_lookup()
+        self.action_component_lookup = self._construct_action_component_lookup()
+        self.random_event_component_lookup = (
+            self._construct_random_event_component_lookup()
+        )
 
     def _setup_after_space_construction(self) -> None:
         """Setup after space construction."""
@@ -223,11 +226,13 @@ class MirjaliliPerishablePlatelet(Problem):
 
         # Get probabilities for demand component
         demand_probs = self._calculate_demand_probabilities(weekday)
-        demand_prob = demand_probs[random_event[self.event_component_lookup["demand"]]]
+        demand_prob = demand_probs[
+            random_event[self.random_event_component_lookup["demand"]]
+        ]
 
         # Get probabilities for received order component
         received_prob = self._calculate_received_order_probabilities(
-            action, random_event[self.event_component_lookup["stock_received"]]
+            action, random_event[self.random_event_component_lookup["stock_received"]]
         )
 
         return demand_prob * received_prob
@@ -239,8 +244,10 @@ class MirjaliliPerishablePlatelet(Problem):
         random_event: chex.Array,
     ) -> Tuple[chex.Array, float]:
         """A transition in the environment for a given state, action and random event"""
-        demand = random_event[self.event_component_lookup["demand"]]
-        max_stock_received = random_event[self.event_component_lookup["stock_received"]]
+        demand = random_event[self.random_event_component_lookup["demand"]]
+        max_stock_received = random_event[
+            self.random_event_component_lookup["stock_received"]
+        ]
         opening_stock_after_delivery = (
             jnp.hstack(
                 [
@@ -261,7 +268,7 @@ class MirjaliliPerishablePlatelet(Problem):
         stock_after_issue = self._issue_oufo(opening_stock_after_delivery, demand)
 
         # Compute variables required to calculate the cost
-        order_quantity = action
+        order_quantity = action[self.action_component_lookup["order_quantity"]]
         variable_order = order_quantity
         fixed_order = order_quantity > 0
         shortage = jnp.max(
@@ -287,10 +294,6 @@ class MirjaliliPerishablePlatelet(Problem):
         )
 
         return next_state, reward
-
-    def initial_value(self, state: jnp.ndarray) -> float:
-        """Initial value estimate based on immediate cut reward."""
-        return 0.0
 
     def get_problem_config(self) -> MirjaliliPerishablePlateletConfig:
         """Get problem configuration for reconstruction.
@@ -365,7 +368,13 @@ class MirjaliliPerishablePlatelet(Problem):
             "stock": slice(1, self.max_useful_life),  # slice for array
         }
 
-    def _construct_event_component_lookup(self) -> Dict[str, int | slice]:
+    def _construct_action_component_lookup(self) -> Dict[str, int]:
+        """Return indices for action components."""
+        return {
+            "order_quantity": 0,
+        }
+
+    def _construct_random_event_component_lookup(self) -> Dict[str, int | slice]:
         """Return indices or slices for event components.
 
         Returns

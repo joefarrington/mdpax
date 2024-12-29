@@ -62,7 +62,7 @@ class PeriodicValueIteration(ValueIteration):
         gamma: float = 0.99,
         max_iter: int = 1000,
         epsilon: float = 1e-3,
-        batch_size: int = 1024,
+        max_batch_size: int = 1024,
         jax_double_precision: bool = True,
         verbose: int = 2,
         checkpoint_dir: Optional[Union[str, Path]] = None,
@@ -79,7 +79,7 @@ class PeriodicValueIteration(ValueIteration):
             gamma: Discount factor (use 1.0 for average reward case)
             max_iter: Maximum number of iterations
             epsilon: Convergence threshold
-            batch_size: Size of state batches for parallel processing
+            max_batch_size: Size of state batches for parallel processing
             verbose: Verbosity level
             checkpoint_dir: Directory for checkpoints (optional)
             checkpoint_frequency: How often to save checkpoints (iterations)
@@ -102,7 +102,7 @@ class PeriodicValueIteration(ValueIteration):
             gamma=gamma,
             max_iter=max_iter,
             epsilon=epsilon,
-            batch_size=batch_size,
+            max_batch_size=max_batch_size,
             jax_double_precision=jax_double_precision,
             verbose=verbose,
             checkpoint_dir=checkpoint_dir,
@@ -166,7 +166,7 @@ class PeriodicValueIteration(ValueIteration):
             gamma=float(self.gamma),
             max_iter=self.max_iter,
             epsilon=self.epsilon,
-            batch_size=self.batch_size,
+            max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,
             checkpoint_dir=self.checkpoint_dir,
             checkpoint_frequency=self.checkpoint_frequency,

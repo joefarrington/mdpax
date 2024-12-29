@@ -33,9 +33,9 @@ class TestPolicy:
         os.chdir(tmpdir)
 
         problem = DeMoorPerishable(issue_policy=issuing_policy)
-        vi_runner = ValueIteration(problem, gamma=0.99, max_iter=5000, epsilon=1e-5)
-        result = vi_runner.solve()
-        policy = result.policy
+        solver = ValueIteration(problem, gamma=0.99, max_iter=5000, epsilon=1e-5)
+        result = solver.solve()
+        policy = result.policy.reshape(-1)
 
         vi_policy = pd.DataFrame(policy)
         # Post-process policy to match reported form

@@ -106,7 +106,9 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         )
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
-        self.event_component_lookup = self._construct_event_component_lookup()
+        self.random_event_component_lookup = (
+            self._construct_random_event_component_lookup()
+        )
 
     def _setup_after_space_construction(self) -> None:
         # Precompute conditional probabilities for speed
@@ -194,18 +196,24 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         opening_stock_a = state[self.state_component_lookup["stock_a"]]
         opening_stock_b = state[self.state_component_lookup["stock_b"]]
 
-        issued_a = random_event[self.event_component_lookup["issued_a"]]
-        issued_b = random_event[self.event_component_lookup["issued_b"]]
+        issued_a = random_event[self.random_event_component_lookup["issued_a"]]
+        issued_b = random_event[self.random_event_component_lookup["issued_b"]]
 
         stock_after_issue_a = self._issue_fifo(opening_stock_a, issued_a)
         stock_after_issue_b = self._issue_fifo(opening_stock_b, issued_b)
 
         # Age stock one day and receive the order from the morning
         closing_stock_a = jnp.hstack(
-            [action[0], stock_after_issue_a[0 : self.max_useful_life - 1]]
+            [
+                action[self.action_component_lookup["order_quantity_a"]],
+                stock_after_issue_a[0 : self.max_useful_life - 1],
+            ]
         )
         closing_stock_b = jnp.hstack(
-            [action[1], stock_after_issue_b[0 : self.max_useful_life - 1]]
+            [
+                action[self.action_component_lookup["order_quantity_b"]],
+                stock_after_issue_b[0 : self.max_useful_life - 1],
+            ]
         )
 
         next_state = jnp.concatenate([closing_stock_a, closing_stock_b], axis=-1)
@@ -267,15 +275,21 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
             "stock_b": slice(m, 2 * m),
         }
 
-    def _construct_event_component_lookup(self) -> dict[str, int]:
-        """Returns a dictionary that maps descriptive names of the components of a event
-        to indices of the elements in the event array"""
-        return {"issued_a": 0, "issued_b": 1}
-
     def _construct_action_component_lookup(self) -> dict[str, int]:
-        """Returns a dictionary that maps descriptive names of the components
-        of a action to indices of the elements in the action array"""
-        return {"order_quantity_a": 0, "order_quantity_b": 1}
+        """Returns a dictionary that maps descriptive names of the components of a action
+        to indices of the elements in the random event array"""
+        return {
+            "order_quantity_a": 0,
+            "order_quantity_b": 1,
+        }
+
+    def _construct_random_event_component_lookup(self) -> dict[str, int]:
+        """Returns a dictionary that maps descriptive names of the components of a random event
+        to indices of the elements in the random event array"""
+        return {
+            "issued_a": 0,
+            "issued_b": 1,
+        }
 
     def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
         """Issue stock using FIFO policy"""

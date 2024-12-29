@@ -116,6 +116,10 @@ class DeMoorPerishable(Problem):
 
         self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
         self.state_component_lookup = self._construct_state_component_lookup()
+        self.action_component_lookup = self._construct_action_component_lookup()
+        self.random_event_component_lookup = (
+            self._construct_random_event_component_lookup()
+        )
 
     def _setup_after_space_construction(self):
         """Setup after space construction."""
@@ -127,11 +131,11 @@ class DeMoorPerishable(Problem):
 
     def _construct_action_space(self) -> jnp.ndarray:
         """Construct action space."""
-        return jnp.arange(0, self.max_order_quantity + 1)
+        return jnp.arange(0, self.max_order_quantity + 1).reshape(-1, 1)
 
     def _construct_random_event_space(self) -> jnp.ndarray:
         """Construct random event space."""
-        return jnp.arange(0, self.max_demand + 1)
+        return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
     @property
     def _state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -173,7 +177,7 @@ class DeMoorPerishable(Problem):
         self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Compute next state and reward for forest transition."""
-        demand = random_event
+        demand = random_event[self.random_event_component_lookup["demand"]]
 
         opening_in_transit = state[self.state_component_lookup["in_transit"]]
 
@@ -184,7 +188,7 @@ class DeMoorPerishable(Problem):
         stock_after_issue = self._issue_stock(opening_stock, demand)
 
         # Compute variables required to calculate the cost
-        variable_order = action
+        variable_order = action[self.action_component_lookup["order_quantity"]]
         shortage = jnp.max(jnp.array([demand - jnp.sum(opening_stock), 0]))
         expiries = stock_after_issue[-1]
         holding = jnp.sum(stock_after_issue[0 : self.max_useful_life - 1])
@@ -207,10 +211,6 @@ class DeMoorPerishable(Problem):
         next_state = jnp.hstack([closing_in_transit, closing_stock]).astype(jnp.int32)
 
         return next_state, reward
-
-    def initial_value(self, state: jnp.ndarray) -> float:
-        """Initial value estimate based on immediate cut reward."""
-        return 0.0
 
     def get_problem_config(self) -> DeMoorPerishableConfig:
         """Get problem configuration for reconstruction.
@@ -246,6 +246,18 @@ class DeMoorPerishable(Problem):
         return {
             "in_transit": slice(0, self.lead_time - 1),
             "stock": slice(self.lead_time - 1, self.max_useful_life),
+        }
+
+    def _construct_action_component_lookup(self) -> dict[str, int | slice]:
+        """Build dictionary that maps from named action components to index or slice"""
+        return {
+            "order_quantity": 0,
+        }
+
+    def _construct_random_event_component_lookup(self) -> dict[str, int | slice]:
+        """Build dictionary that maps from named random event components to index or slice"""
+        return {
+            "demand": 0,
         }
 
     def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
