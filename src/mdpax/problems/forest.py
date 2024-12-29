@@ -1,27 +1,60 @@
 """Forest management MDP problem."""
 
+from dataclasses import dataclass
+
 import jax.numpy as jnp
 
-from mdpax.core.problem import Problem
+from mdpax.core.problem import Problem, ProblemConfig
+from mdpax.utils.types import (
+    ActionSpace,
+    ActionVector,
+    RandomEventSpace,
+    RandomEventVector,
+    Reward,
+    StateSpace,
+    StateVector,
+)
+
+
+@dataclass
+class ForestConfig(ProblemConfig):
+    """Configuration for the Forest Management problem.
+
+
+    Attributes:
+        S: Number of states (tree ages from 0 to S-1)
+        r1: Reward for waiting when forest in oldest state
+        r2: Reward for cutting when forest in oldest state
+        p: Base probability of fire
+    """
+
+    _target_: str = "mdpax.problems.forest.Forest"
+    S: int = 3
+    r1: float = 4.0
+    r2: float = 2.0
+    p: float = 0.1
 
 
 class Forest(Problem):
-    """Forest management MDP.
+    """Forest management MDP problem.
 
     The forest management problem involves deciding whether to cut down trees
     for immediate reward or wait for them to grow larger. There is a risk of
-    fire destroying the forest, which increases with tree size.
+    fire destroying the forest during each time step.
 
-    Parameters
-    ----------
-    S : int
-        Number of states (tree ages from 0 to S-1)
-    r1 : float
-        Reward for cutting young trees
-    r2 : float
-        Additional reward for cutting mature trees
-    p : float
-        Base probability of fire
+    Adapted from the example problem in Python MDP Toolbox
+    https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/example.py
+
+    Shape Requirements:
+        - State: [1] representing tree age
+        - Action: [1] representing cut (1) or wait (0)
+        - Random Event: [1] representing fire (1) or no fire (0)
+
+    Args:
+        S: Number of states (tree ages from 0 to S-1)
+        r1: Reward for waiting when forest in oldest state
+        r2: Reward for cutting when forest in oldest state
+        p: Base probability of fire
     """
 
     def __init__(self, S: int = 3, r1: float = 4.0, r2: float = 2.0, p: float = 0.1):
@@ -40,92 +73,113 @@ class Forest(Problem):
         """Name of the problem."""
         return "forest"
 
-    def _construct_state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Return min and max values for each state dimension.
+    def _construct_state_space(self) -> StateSpace:
+        """Build array of all possible states.
 
-        Returns
-        -------
-        tuple[jnp.ndarray, jnp.ndarray]
-            (mins, maxs) where each is shape [n_dims] and n_dims = 1
+        Returns:
+            Array of shape [n_states, 1] containing all possible tree ages
         """
-        n_dims = 1
+        return jnp.arange(self.S, dtype=jnp.int32).reshape(-1, 1)
 
-        # Single dimension by [0, S-1]
-        mins = jnp.zeros(n_dims, dtype=jnp.int32)
-        maxs = jnp.full(n_dims, self.S - 1, dtype=jnp.int32)
+    def state_to_index(self, state: StateVector) -> int:
+        """Convert state vector to index."""
+        return state[0]
 
-        return mins, maxs
+    def _construct_action_space(self) -> ActionSpace:
+        """Build array of all possible actions.
 
-    def _construct_action_space(self) -> jnp.ndarray:
-        """Return array of actions [wait=0, cut=1].
-
-        Actions
-        -------
-        0 : wait
-            Let the trees continue growing
-        1 : cut
-            Cut down the trees for immediate reward
+        Returns:
+            Array of shape [2, 1] containing actions [wait=0, cut=1]
         """
-        return jnp.array([0, 1])
+        return jnp.array([[0], [1]], dtype=jnp.int32)
 
-    def action_components(self) -> list[str]:
-        """Return list of action component names."""
-        return ["cut"]  # only one action component, cut when 1
+    def _construct_random_event_space(self) -> RandomEventSpace:
+        """Build array of all possible random events.
 
-    def _construct_random_event_space(self) -> jnp.ndarray:
-        """Return array of outcomes [no_fire=0, fire=1].
-
-        Outcomes
-        --------
-        0 : no_fire
-            Forest continues normal growth
-        1 : fire
-            Forest burns down, resetting to age 0
+        Returns:
+            Array of shape [2, 1] containing events [no_fire=0, fire=1]
         """
-        return jnp.array([0, 1])
+        return jnp.array([[0], [1]], dtype=jnp.int32)
 
-    def random_event_probabilities(
-        self, state: int, action: jnp.ndarray
-    ) -> jnp.ndarray:
-        """Compute probability of each outcome given state and action.
+    def random_event_probability(
+        self, state: StateVector, action: ActionVector, random_event: RandomEventVector
+    ) -> float:
+        """Compute probability of random event given state-action pair.
 
         When waiting:
             - No fire probability is 1 - p
             - Fire probability is p
-
         When cutting:
             - No fire probability is 1
             - Fire probability is 0
+
+        Args:
+            state: Current tree age [1]
+            action: Cut (1) or wait (0) [1]
+            random_event: Fire (1) or no fire (0) [1]
+
+        Returns:
+            Probability of the random event occurring
         """
-        return self.probability_matrix[action]
+        return self.probability_matrix[action[0], random_event[0]]
 
     def transition(
-        self, state: int, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Compute next state and reward for forest transition."""
-        is_cut = action == 1
-        is_fire = random_event == 1
+        self, state: StateVector, action: ActionVector, random_event: RandomEventVector
+    ) -> tuple[StateVector, Reward]:
+        """Compute next state and reward for forest transition.
+
+        The reward is 0 for waiting except in the final state, where it is r1.
+        The reward is 1 for cutting except in the final state, where it is r2.
+
+        Args:
+            state: Current tree age [1]
+            action: Cut (1) or wait (0) [1]
+            random_event: Fire (1) or no fire (0) [1]
+
+        Returns:
+            Tuple of (next_state, reward) where:
+                - next_state is the next tree age [1]
+                - reward is the immediate reward for this transition
+        """
+        is_cut = action[0] == 1
+        is_fire = random_event[0] == 1
 
         # Compute reward - only get reward when cutting
         reward = jnp.where(
             is_cut,
             # Cut reward depends on tree age
-            jnp.where(state == self.S - 1, self.r2, jnp.where(state == 0, 0.0, 1.0)),
-            # No reward for waiting
-            jnp.where(state == self.S - 1, self.r1, 0.0),
+            jnp.where(
+                state[0] == self.S - 1, self.r2, jnp.where(state[0] == 0, 0.0, 1.0)
+            ),
+            # No reward for waiting except in final state
+            jnp.where(state[0] == self.S - 1, self.r1, 0.0),
         )
 
         # Compute next state
-        next_state = jnp.where(
-            is_cut | is_fire,
-            # Reset to age 0 if cut or fire
-            0,
-            # Otherwise increment age up to S-1
-            jnp.minimum(state + 1, self.S - 1),
+        next_state = jnp.array(
+            [
+                jnp.where(
+                    is_cut | is_fire,
+                    # Reset to age 0 if cut or fire
+                    0,
+                    # Otherwise increment age up to S-1
+                    jnp.minimum(state[0] + 1, self.S - 1),
+                )
+            ]
         ).astype(jnp.int32)
 
         return next_state, reward
 
-    def initial_value(self, state: jnp.ndarray) -> float:
-        """Initial value estimate based on immediate cut reward."""
-        return 0.0
+    def get_problem_config(self) -> ForestConfig:
+        """Get problem configuration for reconstruction.
+
+        Returns:
+            Configuration containing all parameters needed to reconstruct
+            this problem instance
+        """
+        return ForestConfig(
+            S=self.S,
+            r1=float(self.r1),
+            r2=float(self.r2),
+            p=float(self.p),
+        )

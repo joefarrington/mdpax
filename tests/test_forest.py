@@ -1,38 +1,12 @@
 """Tests for the Forest MDP problem."""
 
+import jax
 import jax.numpy as jnp
 import mdptoolbox.example
 import numpy as np
 import pytest
 
 from mdpax.problems.forest import Forest
-
-
-def test_forest_matrices_match_original():
-    """Test that our Forest implementation matches the original."""
-    # Parameters to test
-    S, r1, r2, p = 3, 4.0, 2.0, 0.1
-
-    # Get matrices from original implementation
-    P_orig, R_orig = mdptoolbox.example.forest(S=S, r1=r1, r2=r2, p=p)
-
-    # Get matrices from our implementation
-    forest = Forest(S=S, r1=r1, r2=r2, p=p)
-    P_new, R_new = forest.build_matrices()
-
-    # Convert JAX arrays to numpy for comparison
-    P_new = np.array(P_new)
-    R_new = np.array(R_new)
-
-    # Compare transition matrices
-    np.testing.assert_allclose(
-        P_orig, P_new, rtol=1e-5, err_msg="Transition matrices don't match"
-    )
-
-    # Compare reward matrices
-    np.testing.assert_allclose(
-        R_orig, R_new, rtol=1e-5, err_msg="Reward matrices don't match"
-    )
 
 
 @pytest.mark.parametrize(
@@ -43,7 +17,7 @@ def test_forest_matrices_match_original():
         {"S": 4, "r1": 2.0, "r2": 8.0, "p": 0.2},  # Higher fire risk
     ],
 )
-def test_forest_different_parameters(params):
+def test_forest_match_mdptoolbox(params):
     """Test that matrices match for different parameter settings."""
     # Get matrices from both implementations
     P_orig, R_orig = mdptoolbox.example.forest(**params)
@@ -56,8 +30,12 @@ def test_forest_different_parameters(params):
     R_new = np.array(R_new)
 
     # Compare
-    np.testing.assert_allclose(P_orig, P_new, rtol=1e-5)
-    np.testing.assert_allclose(R_orig, R_new, rtol=1e-5)
+    np.testing.assert_allclose(
+        P_orig, P_new, rtol=1e-5, err_msg="Transition matrices don't match"
+    )
+    np.testing.assert_allclose(
+        R_orig, R_new, rtol=1e-5, err_msg="Reward matrices don't match"
+    )
 
 
 def test_forest_properties():
@@ -74,7 +52,7 @@ def test_forest_properties():
         assert forest.state_to_index(jnp.array([i])) == i
 
     # Test initial values
-    initial_values = forest.initial_values()
+    initial_values = jax.vmap(forest.initial_value, in_axes=0)(forest.state_space)
     assert initial_values.shape == (forest.S,)
     assert np.all(initial_values == 0)
 
@@ -107,15 +85,23 @@ def test_forest_probabilities():
     forest = Forest(S=3, p=0.1)
 
     # Test waiting action
-    probs = forest.random_event_probabilities(
-        state=1,
-        action=forest.action_space[0],  # Wait
+    probs = jax.vmap(
+        forest.random_event_probability,
+        in_axes=(None, None, 0),
+    )(
+        jnp.array([1]),  # Fixed state
+        jnp.array([0]),  # Wait action
+        forest.random_event_space,  # Vary random events
     )
-    assert np.allclose(probs, [0.9, 0.1])  # [no_fire, fire]
+    assert np.allclose(probs, [0.9, 0.1])
 
     # Test cutting action
-    probs = forest.random_event_probabilities(
-        state=1,
-        action=forest.action_space[1],  # Cut
+    probs = jax.vmap(
+        forest.random_event_probability,
+        in_axes=(None, None, 0),
+    )(
+        jnp.array([1]),  # Fixed state
+        jnp.array([1]),  # Cut action
+        forest.random_event_space,  # Vary random events
     )
-    assert np.allclose(probs, [1.0, 0.0])  # Always succeeds
+    assert np.allclose(probs, [1.0, 0.0])
