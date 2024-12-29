@@ -45,10 +45,28 @@ class Forest(Problem):
     Adapted from the example problem in Python MDP Toolbox
     https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/example.py
 
-    Shape Requirements:
-        - State: [1] representing tree age
-        - Action: [1] representing cut (1) or wait (0)
-        - Random Event: [1] representing fire (1) or no fire (0)
+    State Space:
+        Single integer [1] representing tree age from 0 (newly planted)
+        to S-1 (mature forest)
+
+    Action Space:
+        Binary decision [1]:
+        - 0: Wait (let trees continue growing)
+        - 1: Cut (harvest all trees)
+
+    Random Events:
+        Binary event [1]:
+        - 0: No fire occurs
+        - 1: Fire occurs (destroys forest)
+
+    Dynamics:
+        1. Choose to cut or wait
+        2. If cut, receive age-dependent reward and reset to age 0
+        3. If wait:
+            - Check for fire (probability p if waiting, 0 if cut)
+            - If fire, reset to age 0 with no reward
+            - If no fire, age increases by 1 (up to S-1) and receive
+              r1 reward if in oldest state
 
     Args:
         S: Number of states (tree ages from 0 to S-1)

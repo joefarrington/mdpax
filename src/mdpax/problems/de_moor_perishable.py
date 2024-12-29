@@ -1,18 +1,25 @@
 """Perishable inventory MDP problem from De Moor et al. (2022)."""
 
-from typing import Tuple, Union
-
-import chex
 import jax
 import jax.numpy as jnp
-import numpyro
+import numpyro.distributions
 from hydra.conf import dataclass
+from jaxtyping import Array, Float
 
 from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.spaces import (
     construct_space_from_bounds,
     space_dimensions_from_bounds,
     state_with_dimensions_to_index,
+)
+from mdpax.utils.types import (
+    ActionSpace,
+    ActionVector,
+    RandomEventSpace,
+    RandomEventVector,
+    Reward,
+    StateSpace,
+    StateVector,
 )
 
 
@@ -35,20 +42,46 @@ class DeMoorPerishableConfig(ProblemConfig):
 
 
 class DeMoorPerishable(Problem):
-    """Class for de_moor_perishable scenario
+    """Perishable inventory MDP problem from De Moor et al. (2022).
+
+    Models a single-product, single-echelon, periodic review perishable
+    inventory replenishment problem with:
+    - Deterministic lead time for orders
+    - Deterministic maximum useful life for stock
+    - Gamma-distributed demand
+    - FIFO/LIFO issuing policies
+    - Variable ordering, shortage, wastage and holding costs
+
+    State Space:
+        Vector [lead_time + max_useful_life - 1] containing:
+        - Orders in transit, [lead_time-1] elements
+        - Current stock levels by age, [max_useful_life] elements
+
+    Action Space:
+        Single order quantity [0, max_order_quantity]
+
+    Random Events:
+        Single demand value [0, max_demand] following a discretized
+        gamma distribution
+
+    Dynamics:
+        1. Receive demand from random event
+        2. Issue stock according to policy (FIFO/LIFO)
+        3. Age remaining stock and receive orders in transit
+        4. Calculate costs (ordering, shortages, wastage, holding)
 
     Args:
-        max_demand: maximum daily demand
-        demand_gamma_mean: mean of gamma distribution for demand
-        demand_gamma_cov: coefficient of variation of gamma distribution for demand
-        max_useful_life: maximum useful life of product, m >= 1
-        lead_time: lead time of product, L >= 1
-        max_order_quantity: maximum order quantity
-        variable_order_cost: cost per unit ordered
-        shortage_cost: cost per unit of demand not met
-        wastage_cost: cost per unit of product that expires before use
-        holding_cost: cost per unit of product in stock at the end of the day
-        issue_policy: should be either 'fifo' or 'lifo'
+        max_demand: Maximum possible demand per period
+        demand_gamma_mean: Mean of gamma distribution for demand
+        demand_gamma_cov: Coefficient of variation of demand distribution
+        max_useful_life: Number of periods before stock expires
+        lead_time: Number of periods between order and delivery
+        max_order_quantity: Maximum units that can be ordered
+        variable_order_cost: Cost per unit ordered
+        shortage_cost: Cost per unit of unmet demand
+        wastage_cost: Cost per unit that expires
+        holding_cost: Cost per unit held in stock at the end of each period
+        issue_policy: Stock issuing policy ('fifo' or 'lifo')
     """
 
     def __init__(
@@ -73,8 +106,6 @@ class DeMoorPerishable(Problem):
         assert issue_policy in ["fifo", "lifo"], "Issue policy must be 'fifo' or 'lifo'"
 
         self.max_demand = max_demand
-        # Paper provides mean, CoV for gamma dist, but numpyro distribution expects
-        # alpha (concentration) and beta (rate)
         self.demand_gamma_mean = demand_gamma_mean
         self.demand_gamma_cov = demand_gamma_cov
         self.max_useful_life = max_useful_life
@@ -125,62 +156,105 @@ class DeMoorPerishable(Problem):
         """Setup after space construction."""
         pass
 
-    def _construct_state_space(self) -> jnp.ndarray:
-        """Construct state space."""
+    def _construct_state_space(self) -> StateSpace:
+        """Construct state space.
+
+        Returns:
+            Array containing all possible states [n_states, state_dim]
+        """
         return construct_space_from_bounds(self._state_bounds)
 
-    def _construct_action_space(self) -> jnp.ndarray:
-        """Construct action space."""
+    def _construct_action_space(self) -> ActionSpace:
+        """Construct action space.
+
+        Returns:
+            Array containing all possible actions [n_actions, action_dim]
+        """
         return jnp.arange(0, self.max_order_quantity + 1).reshape(-1, 1)
 
-    def _construct_random_event_space(self) -> jnp.ndarray:
-        """Construct random event space."""
+    def _construct_random_event_space(self) -> RandomEventSpace:
+        """Construct random event space.
+
+        Returns:
+            Array containing all possible random events [n_events, event_dim]
+        """
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
     @property
-    def _state_bounds(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def _state_bounds(self) -> tuple[Float[Array, "n_dims"], Float[Array, "n_dims"]]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
         - First (L-1) dimensions: in-transit orders [0, max_order_quantity]
         - Next M dimensions: stock at each age [0, max_order_quantity]
 
-        Returns
-        -------
-        tuple[jnp.ndarray, jnp.ndarray]
-            (mins, maxs) where each is shape [n_dims] and n_dims = L-1 + M
+        Returns:
+            Tuple of (mins, maxs) where each array has shape [n_dims]
+            and n_dims = lead_time-1 + max_useful_life
         """
         n_dims = self.max_useful_life + self.lead_time - 1
-
-        # All dimensions bounded by [0, max_order_quantity]
         mins = jnp.zeros(n_dims, dtype=jnp.int32)
         maxs = jnp.full(n_dims, self.max_order_quantity, dtype=jnp.int32)
-
         return mins, maxs
 
-    def state_to_index(self, state: jnp.ndarray) -> int:
-        """Convert state vector to index."""
+    def state_to_index(self, state: StateVector) -> int:
+        """Convert state vector to index.
+
+        Args:
+            state: State vector to convert [state_dim]
+
+        Returns:
+            Integer index of the state in state_space
+        """
         return state_with_dimensions_to_index(state, self._state_dimensions)
 
     def random_event_probability(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
+        self,
+        state: StateVector,
+        action: ActionVector,
+        random_event: RandomEventVector,
     ) -> float:
-        """Compute probability of the random event given state and action.
+        """Compute probability of random event given state and action.
 
-        Demand is generated from a gamma distribution with mean demand_gamma_mean
-        and CoV demand_gamma_cov and is independent of the state and action.
+        Demand follows a discretized gamma distribution with mean demand_gamma_mean
+        and coefficient of variation demand_gamma_cov. The demand distribution is
+        independent of the current state and action.
+
+        Args:
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            random_event: Random event vector [event_dim]
+
+        Returns:
+            Probability of this demand value occurring
         """
-        # Demand value is the same as the index of the random event
         return self.demand_probabilities[random_event]
 
     def transition(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Compute next state and reward for forest transition."""
+        self, state: StateVector, action: ActionVector, random_event: RandomEventVector
+    ) -> tuple[StateVector, Reward]:
+        """Compute next state and reward for inventory transition.
+
+        Processes one step of the perishable inventory system:
+        1. Receives demand from random event
+        2. Issues stock according to policy (FIFO/LIFO)
+        3. Ages remaining stock and receives orders in transit
+        4. Calculates costs from ordering, shortages, and holding
+
+        Args:
+            state: Current state vector [state_dim] containing:
+                - Orders in transit [lead_time-1]
+                - Current stock levels by age [max_useful_life]
+            action: Action vector [action_dim] containing order quantity
+            random_event: Random event vector [event_dim] containing demand
+
+        Returns:
+            Tuple of (next_state, reward) where:
+                - next_state is the resulting state vector [state_dim]
+                - reward is the negative of total costs for this step
+        """
         demand = random_event[self.random_event_component_lookup["demand"]]
-
         opening_in_transit = state[self.state_component_lookup["in_transit"]]
-
         opening_stock = state[self.state_component_lookup["stock"]]
 
         in_transit = jnp.hstack([action, opening_in_transit])
@@ -215,12 +289,9 @@ class DeMoorPerishable(Problem):
     def get_problem_config(self) -> DeMoorPerishableConfig:
         """Get problem configuration for reconstruction.
 
-        This method should return a ProblemConfig instance containing all parameters
-        needed to reconstruct this problem instance. The config will be used during
-        checkpoint restoration to recreate the problem.
-
         Returns:
-            Problem configuration
+            Configuration containing all parameters needed to reconstruct
+            this problem instance
         """
         return DeMoorPerishableConfig(
             max_demand=int(self.max_demand),
@@ -236,90 +307,154 @@ class DeMoorPerishable(Problem):
             issue_policy=self.issue_policy,
         )
 
-    ################################################################
-    ### Supporting functions for self.transition() ###
-    ################################################################
+    # Transition function helper methods
+    # ----------------------------------
 
     def _construct_state_component_lookup(self) -> dict[str, int | slice]:
-        """Build dictionary that maps from named state components to index or slice"""
-
+        """Build mapping from state components to indices."""
         return {
             "in_transit": slice(0, self.lead_time - 1),
             "stock": slice(self.lead_time - 1, self.max_useful_life),
         }
 
     def _construct_action_component_lookup(self) -> dict[str, int | slice]:
-        """Build dictionary that maps from named action components to index or slice"""
+        """Build mapping from action components to indices."""
         return {
             "order_quantity": 0,
         }
 
     def _construct_random_event_component_lookup(self) -> dict[str, int | slice]:
-        """Build dictionary that maps from named random event components to index or slice"""
+        """Build mapping from random event components to indices."""
         return {
             "demand": 0,
         }
 
-    def _issue_fifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
-        """Issue stock using FIFO policy"""
-        # Oldest stock on RHS of vector, so reverse
+    def _issue_fifo(
+        self, opening_stock: Float[Array, "max_useful_life"], demand: int
+    ) -> Float[Array, "max_useful_life"]:
+        """Issue stock using FIFO (First-In-First-Out) policy.
+
+        Issues stock starting with oldest items first (right side of vector).
+        Uses scan to process each age category in sequence.
+
+        Args:
+            opening_stock: Current stock levels by age [max_useful_life]
+            demand: Total customer demand to satisfy
+
+        Returns:
+            Updated stock levels after issuing [max_useful_life]
+        """
         _, remaining_stock = jax.lax.scan(
             self._issue_one_step, demand, opening_stock, reverse=True
         )
         return remaining_stock
 
-    def _issue_lifo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
-        """Issue stock using LIFO policy"""
-        # Freshest stock on LHS of vector
+    def _issue_lifo(
+        self, opening_stock: Float[Array, "max_useful_life"], demand: int
+    ) -> Float[Array, "max_useful_life"]:
+        """Issue stock using LIFO (Last-In-First-Out) policy.
+
+        Issues stock starting with newest items first (left side of vector).
+        Uses scan to process each age category in sequence.
+
+        Args:
+            opening_stock: Current stock levels by age [max_useful_life]
+            demand: Total customer demand to satisfy
+
+        Returns:
+            Updated stock levels after issuing [max_useful_life]
+        """
         _, remaining_stock = jax.lax.scan(self._issue_one_step, demand, opening_stock)
         return remaining_stock
 
     def _issue_one_step(
         self, remaining_demand: int, stock_element: int
-    ) -> Tuple[int, int]:
-        """Fill demand with stock of one age, representing one element in the state"""
+    ) -> tuple[int, int]:
+        """Process one age category during stock issuing.
+
+        Args:
+            remaining_demand: Unfulfilled demand to satisfy
+            stock_element: Available stock of current age
+
+        Returns:
+            Tuple of (remaining_demand, remaining_stock) where:
+                - remaining_demand is unfulfilled demand after this age
+                - remaining_stock is stock left in this age category
+        """
         remaining_stock = (stock_element - remaining_demand).clip(0)
         remaining_demand = (remaining_demand - stock_element).clip(0)
         return remaining_demand, remaining_stock
 
     def _calculate_single_step_reward(
         self,
-        state: chex.Array,
-        action: Union[int, chex.Array],
-        transition_function_reward_output: chex.Array,
-    ) -> float:
-        """Calculate the single step reward based on the provided state, action and
-        output from the transition function"""
+        state: StateVector,
+        action: ActionVector,
+        transition_function_reward_output: Float[Array, "4"],
+    ) -> Reward:
+        """Calculate reward (negative cost) for one transition step.
+
+        Computes total cost by combining:
+        - Variable ordering costs
+        - Shortage costs
+        - Wastage costs from expired items
+        - Holding costs for inventory
+
+        Args:
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            transition_function_reward_output: Output for each cost component [4]
+
+        Returns:
+            Negative of total cost for this step
+        """
         cost = jnp.dot(transition_function_reward_output, self.cost_components)
-        # Multiply by -1 to reflect the fact that they are costs
-        reward = -1 * cost
-        return reward
+        return -1 * cost
 
-    ################################################################
-    ### Supporting functions for self.random_event_probability() ###
-    ###############################################################
+    # Random event probability helper methods
+    # ---------------------------------------
 
-    def _convert_gamma_parameters(self, mean: float, cov: float) -> Tuple[float, float]:
-        """Convert mean and coefficient of variation to gamma distribution parameters
-        required by numpyro.distributions.Gamma"""
+    def _convert_gamma_parameters(self, mean: float, cov: float) -> tuple[float, float]:
+        """Convert mean and CoV to gamma distribution parameters.
+
+        Converts from mean and coefficient of variation (CoV) to the
+        shape (alpha) and rate (beta) parameters used by numpyro.distributions.Gamma.
+
+        Args:
+            mean: Mean of the gamma distribution
+            cov: Coefficient of variation
+
+        Returns:
+            Tuple of (alpha, beta) parameters for gamma distribution
+        """
         alpha = 1 / (cov**2)
         beta = 1 / (mean * cov**2)
         return alpha, beta
 
     def _calculate_demand_probabilities(
         self, gamma_alpha: float, gamma_beta: float
-    ) -> chex.Array:
-        """Calculate the probability of each demand level (0, max_demand), given the
-        gamma distribution parameters"""
+    ) -> Float[Array, "max_demand_plus_one"]:
+        """Calculate discretized demand probabilities from gamma distribution.
+
+        Discretizes a gamma distribution by integrating between half-integers:
+        P(demand=d) = P(d-0.5 < X ≤ d+0.5) for d>0
+        P(demand=0) = P(X ≤ 0.5)
+
+        Any probability mass beyond max_demand is added to P(demand=max_demand).
+
+        Args:
+            gamma_alpha: Shape parameter of gamma distribution
+            gamma_beta: Rate parameter of gamma distribution
+
+        Returns:
+            Array of probabilities [max_demand + 1] where index i gives P(demand=i)
+        """
         cdf = numpyro.distributions.Gamma(gamma_alpha, gamma_beta).cdf(
             jnp.hstack([0, jnp.arange(0.5, self.max_demand + 1.5)])
         )
-        # Want integer demand, so calculate P(d<x+0.5) - P(d<x-0.5),
-        # except for 0 demand where use 0 and 0.5
-        # This gives us the same results as in Fig 3 of the paper
+        # Calculate P(d-0.5 < X ≤ d+0.5) using differences of CDF
         demand_probabilities = jnp.diff(cdf)
-        # To make number of random outcomes finite, we truncate the distribution
-        # Add any probability mass that is truncated back to the last demand level
+
+        # Add truncated probability mass to final demand level
         demand_probabilities = demand_probabilities.at[-1].add(
             1 - demand_probabilities.sum()
         )
