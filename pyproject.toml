@@ -42,16 +42,17 @@ line-length = 88
 [tool.ruff]
 line-length = 88
 fix = true
-ignore = [
-    "E501",
-    "F722",
-    "F821",
-]
+
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 fixable = ["ALL"]
 unfixable = []
+ignore = [
+    "E501",
+    "F722",
+    "F821",
+]
 
 [tool.ruff.lint.isort]
 force-single-line = false

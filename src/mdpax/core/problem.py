@@ -56,7 +56,7 @@ class Problem(ABC):
 
     Note:
         All array operations should be implemented using JAX for compatibility
-        with JIT compilation and automatic differentiation.
+        with JIT compilation and vmap/pmap.
     """
 
     def __init__(self):
@@ -83,11 +83,7 @@ class Problem(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Name of the problem.
-
-        Returns:
-            A unique identifier for this problem type
-        """
+        """A unique identifier for this problem type"""
         pass
 
     def _setup_before_space_construction(self) -> None:
@@ -101,20 +97,12 @@ class Problem(ABC):
     # State Space Methods
     @property
     def state_space(self) -> StateSpace:
-        """Array of all possible states.
-
-        Returns:
-            Array of shape [n_states, state_dim] containing all possible states
-        """
+        """Array of shape [n_states, state_dim] containing all possible states"""
         return self._state_space
 
     @property
     def n_states(self) -> int:
-        """Number of states in the problem.
-
-        Returns:
-            Total number of possible states
-        """
+        """Number of states in the problem."""
         return len(self.state_space)
 
     @abstractmethod
@@ -144,20 +132,12 @@ class Problem(ABC):
     # Action Space Methods
     @property
     def action_space(self) -> ActionSpace:
-        """Array of all possible actions.
-
-        Returns:
-            Array of shape [n_actions, action_dim] containing all possible actions
-        """
+        """Array of shape [n_actions, action_dim] containing all possible actions"""
         return self._action_space
 
     @property
     def n_actions(self) -> int:
-        """Number of actions in the problem.
-
-        Returns:
-            Total number of possible actions
-        """
+        """Number of actions in the problem."""
         return len(self.action_space)
 
     @abstractmethod
@@ -169,23 +149,15 @@ class Problem(ABC):
         """
         pass
 
-    # Random Event Methods
+    # Random event Methods
     @property
     def random_event_space(self) -> RandomEventSpace:
-        """Array of all possible random events.
-
-        Returns:
-            Array of shape [n_events, event_dim] containing all possible random events
-        """
+        """Array of shape [n_events, event_dim] containing all possible random events"""
         return self._random_event_space
 
     @property
     def n_random_events(self) -> int:
-        """Number of random events in the problem.
-
-        Returns:
-            Total number of possible random events
-        """
+        """Number of random events in the problem."""
         return len(self.random_event_space)
 
     @abstractmethod
@@ -254,6 +226,7 @@ class Problem(ABC):
         """
         return 0.0
 
+    # Support methods
     @abstractmethod
     def get_problem_config(self) -> ProblemConfig:
         """Get problem configuration for reconstruction.

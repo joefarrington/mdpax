@@ -14,7 +14,12 @@ from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.batch_processing import BatchProcessor
 from mdpax.utils.logging import verbosity_to_loguru_level
 from mdpax.utils.types import (
+    BatchedResults,
     BatchedStates,
+    Policy,
+    ResultsBatch,
+    StateBatch,
+    ValueFunction,
 )
 
 
@@ -77,8 +82,8 @@ class SolverState:
         info: Solver metadata
     """
 
-    values: Float[Array, "n_states"]
-    policy: Float[Array, "n_states action_dim"] | None
+    values: ValueFunction | None
+    policy: Policy | None
     info: SolverInfo
 
 
@@ -192,8 +197,8 @@ class Solver(ABC):
         )
 
         # Initialize solver state
-        self.values: Float[Array, "n_states"] | None = None
-        self.policy: Float[Array, "n_states action_dim"] | None = None
+        self.values: ValueFunction | None = None
+        self.policy: Policy | None = None
         self.iteration: int = 0
 
         self._calculate_initial_value_scan_state_batches_pmap = jax.pmap(
@@ -206,16 +211,8 @@ class Solver(ABC):
         # Initialize values using solver-specific method
         self.values = self._initialize_values(self.batched_states)
 
-    def _initialize_values(
-        self, batched_states: BatchedStates
-    ) -> Float[Array, "n_states"]:
-        """Initialize value function using problem's initial value function.
-
-        Uses pmap with batching to efficiently compute initial values for all states.
-
-        Returns:
-            Array of initial values for all states [n_states]
-        """
+    def _initialize_values(self, batched_states: BatchedStates) -> ValueFunction:
+        """Initialize value function using problem's initial value function."""
         # Multi-device initialization using scan and pmap
         padded_batched_initial_values = (
             self._calculate_initial_value_scan_state_batches_pmap(batched_states)
@@ -226,8 +223,8 @@ class Solver(ABC):
         return initial_values
 
     def _calculate_initial_value_state_batch(
-        self, carry, state_batch: Float[Array, "batch_size state_dim"]
-    ) -> tuple[None, Float[Array, "batch_size"]]:
+        self, carry, state_batch: StateBatch
+    ) -> tuple[None, ResultsBatch]:
         """Calculate the updated value for a batch of states"""
         initial_values = jax.vmap(
             self.problem.initial_value,
@@ -237,23 +234,27 @@ class Solver(ABC):
     def _calculate_initial_value_scan_state_batches(
         self,
         padded_batched_states: BatchedStates,
-    ) -> Float[Array, "n_devices n_batches batch_size"]:
+    ) -> BatchedResults:
         """Calculate the updated value for multiple batches of states"""
 
-        _, new_values_padded = jax.lax.scan(
+        _, padded_batched_initial_values = jax.lax.scan(
             self._calculate_initial_value_state_batch,
             None,
             padded_batched_states,
         )
-        return new_values_padded
+        return padded_batched_initial_values
 
     @abstractmethod
     def _setup_solver(self) -> None:
-        """Setup solver-specific data structures and functions."""
+        """Setup solver-specific data structures and functions.
+
+        Returns:
+            None
+        """
         pass
 
     @abstractmethod
-    def _iteration_step(self) -> tuple[Float[Array, "n_states"], float]:
+    def _iteration_step(self) -> tuple[ValueFunction, float]:
         """Perform one iteration step.
 
         Returns:
@@ -284,9 +285,11 @@ class Solver(ABC):
             info=SolverInfo(iteration=self.iteration),
         )
 
-    def _unbatch_results(self, padded_array: jnp.ndarray) -> jnp.ndarray:
-        """Reshape and remove padding from results."""
-        return self.batch_processor.unbatch_results(padded_array)
+    def _unbatch_results(
+        self, padded_batched_results: Float[Array, "n_devices n_batches batch_size"]
+    ) -> Float[Array, "n_states"]:
+        """Remove padding from batched results and combine across devices."""
+        return self.batch_processor.unbatch_results(padded_batched_results)
 
     @property
     def n_devices(self) -> int:

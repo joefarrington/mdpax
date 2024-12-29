@@ -1,12 +1,11 @@
 """Value iteration solver for MDPs."""
 
 from pathlib import Path
-from typing import Optional, Tuple, Union
 
-import chex
 import jax
 import jax.numpy as jnp
 from hydra.conf import dataclass
+from jaxtyping import Array, Float
 from loguru import logger
 
 from mdpax.core.problem import Problem
@@ -16,21 +15,45 @@ from mdpax.core.solver import (
     SolverWithCheckpointConfig,
 )
 from mdpax.utils.checkpointing import CheckpointMixin
+from mdpax.utils.types import (
+    ActionSpace,
+    ActionVector,
+    BatchedStates,
+    RandomEventSpace,
+    StateBatch,
+    StateVector,
+)
 
 
 @dataclass
 class ValueIterationConfig(SolverWithCheckpointConfig):
     """Configuration for the Value Iteration solver.
 
-    This is the base value iteration solver that performs synchronous updates
-    over all states. It inherits all parameters from the base SolverConfig.
+    This solver performs synchronous updates over all states using
+    parallel processing across devices.
+
+    Attributes:
+        _target_: Full path to solver class for Hydra instantiation
     """
 
     _target_: str = "mdpax.solvers.value_iteration.ValueIteration"
 
 
 class ValueIteration(Solver, CheckpointMixin):
-    """Value iteration solver for MDPs."""
+    """Value iteration solver for MDPs.
+
+    This solver implements synchronous value iteration with parallel state updates
+    across devices. States are automatically batched and padded for efficient
+    parallel processing.
+
+    Shape Requirements:
+        - Values: [n_states]
+        - Policy: [n_states, action_dim]
+        - Batched states: [n_devices, n_batches, batch_size, state_dim]
+
+    Note:
+        Supports checkpointing for long-running problems.
+    """
 
     def __init__(
         self,
@@ -40,7 +63,7 @@ class ValueIteration(Solver, CheckpointMixin):
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
-        checkpoint_dir: Optional[Union[str, Path]] = None,
+        checkpoint_dir: str | Path | None = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
         enable_async_checkpointing: bool = True,
@@ -79,25 +102,40 @@ class ValueIteration(Solver, CheckpointMixin):
         )
 
     def _get_value_next_state(
-        self, next_state: chex.Array, values: chex.Array
+        self, next_state: StateVector, values: Float[Array, "n_states"]
     ) -> float:
-        """Lookup the value of the next state in the value function from the
-        previous iteration."""
+        """Lookup the value of the next state in the value function.
+
+        Args:
+            next_state: State vector to look up [state_dim]
+            values: Current value function [n_states]
+
+        Returns:
+            Value of the next state
+        """
         return values[self.problem.state_to_index(next_state)]
 
     def _calculate_updated_state_action_value(
         self,
-        state: chex.Array,
-        action: Union[int, chex.Array],
-        random_events: chex.Array,
+        state: StateVector,
+        action: ActionVector,
+        random_events: RandomEventSpace,
         gamma: float,
-        values: chex.Array,
+        values: Float[Array, "n_states"],
     ) -> float:
-        """Update the state-action value for a given state, action pair"""
-        (
-            next_states,
-            single_step_rewards,
-        ) = jax.vmap(
+        """Calculate the expected value for a state-action pair.
+
+        Args:
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            random_events: All possible random events [n_events, event_dim]
+            gamma: Discount factor
+            values: Current value function [n_states]
+
+        Returns:
+            Expected value for the state-action pair
+        """
+        next_states, single_step_rewards = jax.vmap(
             self.problem.transition,
             in_axes=(None, None, 0),
         )(
@@ -113,22 +151,28 @@ class ValueIteration(Solver, CheckpointMixin):
             self.problem.random_event_probability,
             in_axes=(None, None, 0),
         )(state, action, random_events)
-        new_state_action_value = (single_step_rewards + gamma * next_state_values).dot(
-            probs
-        )
-        return new_state_action_value
+        return (single_step_rewards + gamma * next_state_values).dot(probs)
 
     def _calculate_updated_value(
         self,
-        state: chex.Array,
-        actions: Union[int, chex.Array],
-        random_events: chex.Array,
+        state: StateVector,
+        actions: ActionSpace,
+        random_events: RandomEventSpace,
         gamma: float,
-        values: chex.Array,
+        values: Float[Array, "n_states"],
     ) -> float:
-        """Update the value for a given state, by taking the max of the
-          updated state-action
-        values over all actions"""
+        """Calculate the maximum expected value over all actions for a state.
+
+        Args:
+            state: Current state vector [state_dim]
+            actions: All possible actions [n_actions, action_dim]
+            random_events: All possible random events [n_events, event_dim]
+            gamma: Discount factor
+            values: Current value function [n_states]
+
+        Returns:
+            Maximum expected value over all actions
+        """
         return jnp.max(
             jax.vmap(
                 self._calculate_updated_state_action_value,
@@ -137,23 +181,44 @@ class ValueIteration(Solver, CheckpointMixin):
         )
 
     def _calculate_updated_value_state_batch(
-        self, carry, state_batch: chex.Array
-    ) -> Tuple[Tuple[Union[int, chex.Array], chex.Array, chex.Array], chex.Array]:
-        """Calculate the updated value for a batch of states"""
-        actions, random_events, gamma, values = carry
+        self,
+        carry: tuple[Float[Array, "n_states"], float, ActionSpace, RandomEventSpace],
+        state_batch: StateBatch,
+    ) -> tuple[tuple, Float[Array, "batch_size"]]:
+        """Calculate updated values for a batch of states.
+
+        Args:
+            carry: Tuple of (values, gamma, action_space, random_event_space)
+            state_batch: Batch of states to update [batch_size, state_dim]
+
+        Returns:
+            Tuple of (carry, new_values) where new_values has shape [batch_size]
+        """
+        values, gamma, action_space, random_event_space = carry
         new_values = jax.vmap(
-            self._calculate_updated_value, in_axes=(0, None, None, None, None)
-        )(state_batch, actions, random_events, gamma, values)
+            self._calculate_updated_value,
+            in_axes=(0, None, None, None, None),
+        )(state_batch, values, gamma, action_space, random_event_space)
         return carry, new_values
 
     def _calculate_updated_value_scan_state_batches(
         self,
-        carry: Tuple[Union[int, chex.Array], chex.Array, chex.Array],
-        padded_batched_states: chex.Array,
-    ) -> chex.Array:
-        """Calculate the updated value for multiple batches of states, using
-        jax.lax.scan to loop over batches of states."""
-        carry, new_values_padded = jax.lax.scan(
+        carry: tuple[Float[Array, "n_states"], float, ActionSpace, RandomEventSpace],
+        padded_batched_states: BatchedStates,
+    ) -> Float[Array, "n_devices n_batches batch_size"]:
+        """Update values for multiple batches of states.
+
+        Uses jax.lax.scan to loop over batches efficiently.
+
+        Args:
+            carry: Tuple of (actions, random_events, gamma, values)
+            padded_batched_states: States prepared for batch processing
+                Shape: [n_devices, n_batches, batch_size, state_dim]
+
+        Returns:
+            Updated values for all states [n_devices, n_batches, batch_size]
+        """
+        _, new_values_padded = jax.lax.scan(
             self._calculate_updated_value_state_batch,
             carry,
             padded_batched_states,
@@ -162,14 +227,24 @@ class ValueIteration(Solver, CheckpointMixin):
 
     def _extract_policy_idx_one_state(
         self,
-        state: chex.Array,
-        actions: Union[int, chex.Array],
-        random_events: chex.Array,
+        state: StateVector,
+        actions: ActionSpace,
+        random_events: RandomEventSpace,
         gamma: float,
-        values: chex.Array,
+        values: Float[Array, "n_states"],
     ) -> int:
-        """Extract the best action for a single state, by taking the argmax of the
-        updated state-action values over all actions"""
+        """Find the optimal action index for a single state.
+
+        Args:
+            state: Current state vector [state_dim]
+            actions: All possible actions [n_actions, action_dim]
+            random_events: All possible random events [n_events, event_dim]
+            gamma: Discount factor
+            values: Current value function [n_states]
+
+        Returns:
+            Index of the optimal action
+        """
         best_action_idx = jnp.argmax(
             jax.vmap(
                 self._calculate_updated_state_action_value,
@@ -180,55 +255,75 @@ class ValueIteration(Solver, CheckpointMixin):
 
     def _extract_policy_idx_state_batch(
         self,
-        carry: Tuple[Union[int, chex.Array], chex.Array, chex.Array],
-        state_batch: chex.Array,
-    ) -> chex.Array:
-        """Extract the best action for a batch of states"""
+        carry: tuple[ActionSpace, RandomEventSpace, float, Float[Array, "n_states"]],
+        state_batch: StateBatch,
+    ) -> tuple[tuple, Float[Array, "batch_size"]]:
+        """Extract optimal action indices for a batch of states.
+
+        Args:
+            carry: Tuple of (actions, random_events, gamma, values)
+            state_batch: Batch of states [batch_size, state_dim]
+
+        Returns:
+            Tuple of (carry, action_indices) where action_indices has shape [batch_size]
+        """
         actions, random_events, gamma, values = carry
         best_action_idxs = jax.vmap(
-            self._extract_policy_idx_one_state, in_axes=(0, None, None, None, None)
+            self._extract_policy_idx_one_state,
+            in_axes=(0, None, None, None, None),
         )(state_batch, actions, random_events, gamma, values)
         return carry, best_action_idxs
 
     def _extract_policy_idx_scan_state_batches(
         self,
-        carry: Tuple[Union[int, chex.Array], chex.Array, chex.Array],
-        padded_batched_states: chex.Array,
-    ) -> chex.Array:
-        """Extract the best action for multiple batches of states, using jax.lax.scan
-        o loop over batches of states."""
-        carry, best_action_idxs_padded = jax.lax.scan(
+        carry: tuple[Float[Array, "n_states"], float, ActionSpace, RandomEventSpace],
+        padded_batched_states: BatchedStates,
+    ) -> Float[Array, "n_devices n_batches batch_size"]:
+        """Extract optimal action indices for multiple batches of states.
+
+        Uses jax.lax.scan to loop over batches efficiently.
+
+        Args:
+            carry: Tuple of (actions, random_events, gamma, values)
+            padded_batched_states: States prepared for batch processing
+                Shape: [n_devices, n_batches, batch_size, state_dim]
+
+        Returns:
+            Updated values for all states [n_devices, n_batches, batch_size]
+        """
+        _, best_action_idxs_padded = jax.lax.scan(
             self._extract_policy_idx_state_batch,
             carry,
             padded_batched_states,
         )
         return best_action_idxs_padded
 
-    def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
+    def _iteration_step(self) -> tuple[Float[Array, "n_states"], float]:
         """Perform one iteration step.
 
         Returns:
-            Tuple of (new values, convergence measure)
+            Tuple of (new_values, convergence_measure) where:
+                - new_values are the updated state values [n_states]
+                - convergence_measure is max absolute change in values
         """
         new_values = self._update_values(
-            self.batched_states,  # Shape could vary
+            self.batched_states,
             self.problem.action_space,
             self.problem.random_event_space,
             self.gamma,
             self.values,
         )
-        # Compute convergence measure
         conv = jnp.max(jnp.abs(new_values - self.values))
         return new_values, conv
 
     def _update_values(
         self,
-        batched_states: jnp.ndarray,
-        actions: jnp.ndarray,
-        random_events: jnp.ndarray,
+        batched_states: BatchedStates,
+        actions: ActionSpace,
+        random_events: RandomEventSpace,
         gamma: float,
-        values: jnp.ndarray,
-    ) -> jnp.ndarray:
+        values: Float[Array, "n_states"],
+    ) -> Float[Array, "n_states"]:
         """Update values for a batch of states."""
         padded_batched_values = self._calculate_updated_value_scan_state_batches_pmap(
             (actions, random_events, gamma, values), batched_states
@@ -236,54 +331,50 @@ class ValueIteration(Solver, CheckpointMixin):
         new_values = self._unbatch_results(padded_batched_values)
         return new_values
 
-    def _extract_policy(
-        self,
-    ) -> jnp.ndarray:
-        """Extract policy from values."""
-
-        # Multi-device policy extraction
-        padded_batched_policy_action_idxs = (
-            self._extract_policy_idx_scan_state_batches_pmap(
-                (
-                    self.problem.action_space,
-                    self.problem.random_event_space,
-                    self.gamma,
-                    self.values,
-                ),
-                self.batched_states,
-            )
-        )
-
-        policy_action_idxs = self._unbatch_results(padded_batched_policy_action_idxs)
-
-        # Look up actual actions from policy
-        return jnp.take(self.problem.action_space, policy_action_idxs, axis=0)
-
-    def solve(self) -> SolverState:
-        """Run solver to convergence.
+    def _extract_policy(self) -> Float[Array, "n_states action_dim"]:
+        """Extract the optimal policy from the current value function.
 
         Returns:
-            Tuple of (optimal values, optimal policy)
+            Array of optimal actions for each state [n_states, action_dim]
         """
+        padded_batched_policy_idxs = self._extract_policy_idx_scan_state_batches_pmap(
+            (
+                self.problem.action_space,
+                self.problem.random_event_space,
+                self.gamma,
+                self.values,
+            ),
+            self.batched_states,
+        )
+        policy_idxs = self._unbatch_results(padded_batched_policy_idxs)
+        return jnp.take(self.problem.action_space, policy_idxs, axis=0)
 
+    def solve(self) -> SolverState:
+        """Run value iteration to convergence or max iterations.
+
+        Performs synchronous value iteration updates until either:
+        1. The maximum change in values is below epsilon
+        2. The maximum number of iterations is reached
+
+        Returns:
+            SolverState containing:
+                - Final values [n_states]
+                - Optimal policy [n_states, action_dim]
+                - Solver info including iteration count
+        """
         while self.iteration < self.max_iter:
             self.iteration += 1
-            # Perform iteration step
             new_values, conv = self._iteration_step()
-
-            # Update values and iteration count
             self.values = new_values
 
             logger.info(f"Iteration {self.iteration} maximum delta: {conv:.4f}")
 
-            # Check convergence
             if conv < self.epsilon:
                 logger.info(
                     f"Convergence threshold reached at iteration {self.iteration}"
                 )
                 break
 
-            # Save checkpoint if enabled
             if (
                 self.is_checkpointing_enabled
                 and self.iteration % self.checkpoint_frequency == 0
@@ -293,7 +384,6 @@ class ValueIteration(Solver, CheckpointMixin):
         if conv >= self.epsilon:
             logger.info("Maximum iterations reached")
 
-        # Save checkpoint if enabled
         if self.is_checkpointing_enabled:
             self.save(self.iteration)
 
@@ -305,8 +395,13 @@ class ValueIteration(Solver, CheckpointMixin):
         logger.success("Value iteration completed")
         return self.solver_state
 
-    def _get_solver_config(self) -> ValueIterationConfig:
-        """Get solver configuration for reconstruction."""
+    def get_solver_config(self) -> ValueIterationConfig:
+        """Get solver configuration for reconstruction.
+
+        Returns:
+            Configuration containing all parameters needed to reconstruct
+            this solver instance
+        """
         return ValueIterationConfig(
             problem=self.problem.get_problem_config(),
             gamma=float(self.gamma),
@@ -314,7 +409,7 @@ class ValueIteration(Solver, CheckpointMixin):
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,
-            checkpoint_dir=self.checkpoint_dir,
+            checkpoint_dir=str(self.checkpoint_dir) if self.checkpoint_dir else None,
             checkpoint_frequency=self.checkpoint_frequency,
             max_checkpoints=self.max_checkpoints,
             enable_async_checkpointing=self.enable_async_checkpointing,
