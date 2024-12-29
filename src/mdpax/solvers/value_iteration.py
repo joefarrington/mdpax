@@ -46,11 +46,6 @@ class ValueIteration(Solver, CheckpointMixin):
     across devices. States are automatically batched and padded for efficient
     parallel processing.
 
-    Shape Requirements:
-        - Values: [n_states]
-        - Policy: [n_states, action_dim]
-        - Batched states: [n_devices, n_batches, batch_size, state_dim]
-
     Note:
         Supports checkpointing for long-running problems.
     """

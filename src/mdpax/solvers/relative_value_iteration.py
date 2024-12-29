@@ -1,7 +1,6 @@
 """Relative value iteration solver for average reward MDPs."""
 
 from pathlib import Path
-from typing import Optional, Tuple, Union
 
 import chex
 import jax.numpy as jnp
@@ -11,6 +10,7 @@ from loguru import logger
 from mdpax.core.problem import Problem
 from mdpax.core.solver import SolverInfo, SolverState
 from mdpax.solvers.value_iteration import ValueIteration, ValueIterationConfig
+from mdpax.utils.types import ValueFunction
 
 
 @dataclass
@@ -20,22 +20,36 @@ class RelativeValueIterationConfig(ValueIterationConfig):
     This solver is designed for average reward problems and extends the base
     value iteration solver. It forces gamma=1.0 as required for average reward
     optimization.
+
+    Attributes:
+        _target_: Full path to solver class for Hydra instantiation
+        gamma: Must be 1.0 for average reward problems
     """
 
     _target_: str = "mdpax.solvers.relative_value_iteration.RelativeValueIteration"
-    gamma: float = 1.0  # Must be 1.0 for average reward problems
+    gamma: float = 1.0
 
 
 @chex.dataclass(frozen=True)
 class RelativeValueIterationInfo(SolverInfo):
-    """Runtime information for relative value iteration."""
+    """Runtime information for relative value iteration.
+
+    Attributes:
+        gain: Current gain term for average reward adjustment
+    """
 
     gain: float
 
 
 @chex.dataclass(frozen=True)
 class RelativeValueIterationState(SolverState):
-    """Runtime state for relative value iteration."""
+    """Runtime state for relative value iteration.
+
+    Attributes:
+        values: Current value function [n_states]
+        policy: Current policy [n_states, action_dim]
+        info: Solver metadata including gain term
+    """
 
     info: RelativeValueIterationInfo
 
@@ -48,8 +62,8 @@ class RelativeValueIteration(ValueIteration):
     2. Tracking and subtracting a gain term to handle unbounded values
     3. Using span (max - min value difference) for convergence
 
-    The solver maintains the same batched processing and multi-device support
-    as the parent ValueIteration class.
+    Note:
+        Supports checkpointing for long-running problems.
     """
 
     def __init__(
@@ -60,7 +74,7 @@ class RelativeValueIteration(ValueIteration):
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
         verbose: int = 2,
-        checkpoint_dir: Optional[Union[str, Path]] = None,
+        checkpoint_dir: str | Path | None = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
         enable_async_checkpointing: bool = True,
@@ -85,11 +99,13 @@ class RelativeValueIteration(ValueIteration):
         )
         self.gain = 0.0  # Initialize gain term for average reward
 
-    def _iteration_step(self) -> Tuple[jnp.ndarray, float]:
+    def _iteration_step(self) -> tuple[ValueFunction, float]:
         """Run one iteration and compute span for convergence.
 
         Returns:
-            Tuple of (new_values, span) where span is used for convergence
+            Tuple of (new_values, span) where:
+                - new_values are the updated state values [n_states]
+                - span is max-min value difference for convergence
         """
         # Get new values using parent's batch processing
         new_values, _ = super()._iteration_step()
@@ -112,8 +128,15 @@ class RelativeValueIteration(ValueIteration):
     def solve(self) -> RelativeValueIterationState:
         """Run relative value iteration to convergence.
 
+        Performs synchronous value iteration updates until either:
+        1. The span of value differences is below epsilon
+        2. The maximum number of iterations is reached
+
         Returns:
-            SolverState containing final values, policy, and solver info
+            SolverState containing:
+                - Final values [n_states]
+                - Optimal policy [n_states, action_dim]
+                - Solver info including gain term
         """
         while self.iteration < self.max_iter:
             self.iteration += 1
@@ -128,7 +151,6 @@ class RelativeValueIteration(ValueIteration):
                 f"Iteration {self.iteration}: span: {conv:.4f}, gain: {self.gain:.4f}"
             )
 
-            # Check convergence
             if conv < self.epsilon:
                 logger.info(
                     f"Convergence threshold reached at iteration {self.iteration}"
@@ -153,18 +175,23 @@ class RelativeValueIteration(ValueIteration):
         self.policy = self._extract_policy()
         logger.info("Policy extracted")
 
-        logger.info("Relative value iteration completed")
+        logger.success("Relative value iteration completed")
         return self.solver_state
 
     def _get_solver_config(self) -> RelativeValueIterationConfig:
-        """Get solver configuration for reconstruction."""
+        """Get solver configuration for reconstruction.
+
+        Returns:
+            Configuration containing all parameters needed to reconstruct
+            this solver instance
+        """
         return RelativeValueIterationConfig(
             problem=self.problem.get_problem_config(),
             max_iter=self.max_iter,
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,
-            checkpoint_dir=self.checkpoint_dir,
+            checkpoint_dir=str(self.checkpoint_dir) if self.checkpoint_dir else None,
             checkpoint_frequency=self.checkpoint_frequency,
             max_checkpoints=self.max_checkpoints,
             enable_async_checkpointing=self.enable_async_checkpointing,
@@ -179,9 +206,10 @@ class RelativeValueIteration(ValueIteration):
             info=RelativeValueIterationInfo(iteration=self.iteration, gain=self.gain),
         )
 
-    def _restore_state_from_checkpoint(self, state: dict) -> None:
+    def _restore_state_from_checkpoint(
+        self, solver_state: RelativeValueIterationState
+    ) -> None:
         """Restore solver state from checkpoint."""
-        solver_state = state["state"]
         self.values = solver_state.values
         self.policy = solver_state.policy
         self.iteration = solver_state.info.iteration
