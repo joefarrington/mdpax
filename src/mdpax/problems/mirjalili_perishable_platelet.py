@@ -1,18 +1,28 @@
-import itertools
-from typing import Dict, List, Tuple, Union
+"""Perishable inventory MDP problem from Mirjalili (2022)."""
 
-import chex
+import itertools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpyro
 from hydra.conf import dataclass
+from jaxtyping import Array, Float
 
 from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.spaces import (
     construct_space_from_bounds,
     space_dimensions_from_bounds,
     state_with_dimensions_to_index,
+)
+from mdpax.utils.types import (
+    ActionSpace,
+    ActionVector,
+    RandomEventSpace,
+    RandomEventVector,
+    Reward,
+    StateSpace,
+    StateVector,
 )
 
 
@@ -25,13 +35,11 @@ class MirjaliliPerishablePlateletConfig(ProblemConfig):
     )
     max_demand: int = 20
     # [M, T, W, T, F, S, S]
-    weekday_demand_negbin_n: tuple[float] = tuple([3.5, 11.0, 7.2, 11.1, 5.9, 5.5, 2.2])
-    weekday_demand_negbin_delta: tuple[float] = tuple(
-        [5.7, 6.9, 6.5, 6.2, 5.8, 3.3, 3.4]
-    )
+    weekday_demand_negbin_n: tuple[float, ...] = (3.5, 11.0, 7.2, 11.1, 5.9, 5.5, 2.2)
+    weekday_demand_negbin_delta: tuple[float, ...] = (5.7, 6.9, 6.5, 6.2, 5.8, 3.3, 3.4)
     max_useful_life: int = 3
-    shelf_life_at_arrival_distribution_c_0: tuple[float] = tuple([1.0, 0.5])
-    shelf_life_at_arrival_distribution_c_1: tuple[float] = tuple([0.0, 0.0])
+    useful_life_at_arrival_distribution_c_0: tuple[float, ...] = (1.0, 0.5)
+    useful_life_at_arrival_distribution_c_1: tuple[float, ...] = (0.0, 0.0)
     max_order_quantity: int = 20
     variable_order_cost: float = 0.0
     fixed_order_cost: float = 10.0
@@ -52,38 +60,88 @@ WEEKDAYS = [
 
 
 class MirjaliliPerishablePlatelet(Problem):
-    """Class to run value iteration for mirjalili_perishable_platelet scenario
+    """Platelet inventory MDP problem from Mirjalili (2022).
+
+    Thesis: https://tspace.library.utoronto.ca/bitstream/1807/124976/1/Mirjalili_Mahdi_202211_PhD_thesis.pdf
+    Preprint: https://doi.org/10.48550/arXiv.2307.09395
+
+    Models a single-product, single-echelon, periodic review perishable
+    inventory replenishment problem for platelets in a hospital blood bank
+    where the products have a fixed maximum useful life but uncertain remaining
+    useful life at arrival. The distribution of remaining useful life at arrival
+    may depend on the order quantity.
+
+    State Space (state_dim = max_useful_life):
+        Vector containing:
+        - Weekday: 1 element in range [0, 6] (Monday to Sunday)
+        - Stock by age: [max_useful_life-1] elements in range [0, max_order_quantity],
+          ordered with oldest units on the right
+
+    Action Space (action_dim = 1):
+        Vector containing:
+        - Order quantity: 1 element in range [0, max_order_quantity]
+
+    Random Events (event_dim = max_useful_life + 1):
+        Vector containing:
+        - Demand: 1 element in range [0, max_demand]
+        - Stock received by age: [max_useful_life] elements in range [0, max_order_quantity]
+          summing to at most max_order_quantity
+
+    Dynamics:
+        1. Place replenishment order
+        2. Immediately receive the order, where the remaining useful life of the
+            units at arrival is sampled from a multinomial distribution with
+            parameters that may depend on the order quantity
+        3. Sample demand from weekday-specific negative binomial distribution
+        4. Issue stock using OUFO (Oldest Units First Out) policy
+        5. Age remaining stock one period and discard expired units
+        6. Reward is negative of total costs:
+           - Variable ordering costs (per unit ordered)
+           - Fixed ordering costs (when order > 0)
+           - Shortage costs (per unit of unmet demand)
+           - Wastage costs (per unit that expires)
+           - Holding costs (per unit in stock at end of period, including expiring units)
+        7. Update weekday to next day of week
 
     Args:
-        max_demand: int,
-        weekday_demand_negbin_n: parameter n of the negative binomial distribution,
-            one for each weekday in order [M, T, W, T, F, S, S]
-        weekday_demand_negbin_delta: parameter delta of the negative binomial
-            distribution, one for each weekday in order [M, T, W, T, F, S, S]
-        max_useful_life: maximum useful life of product, m >= 1
-        shelf_life_at_arrival_distribution_c_0: parameter c_0 used to determine
-            parameters of multinomial distribution of useful life on arrival in
-            order [2, ..., m]
-        shelf_life_at_arrival_distribution_c_1: parameter c_1 used to determine
-            parameters of multinomial distribution of useful life on arrival in
-            order [2, ..., m]
-        max_order_quantity: maximum order quantity
-        variable_order_cost: cost per unit ordered
-        fixed_order_cost: cost incurred when order > 0
-        shortage_cost: cost per unit of demand not met
-        wastage_cost: cost per unit of product that expires before use
-        holding_cost: cost per unit of product in stock at the end of the day
+        max_demand: Maximum possible demand per period
+        weekday_demand_negbin_n: Parameter n of negative binomial distribution for each weekday, [M, T, W, T, F, S, S]
+        weekday_demand_negbin_delta: Parameter delta of negative binomial distribution for each weekday, [M, T, W, T, F, S, S]
+        max_useful_life: Number of periods before stock expires
+        useful_life_at_arrival_distribution_c_0: Base logit parameters for useful life at arrival, [2, ..., max_useful_life]
+        useful_life_at_arrival_distribution_c_1: Order quantity multiplier for useful life logits, [2, ..., max_useful_life]
+        max_order_quantity: Maximum units that can be ordered
+        variable_order_cost: Cost per unit ordered
+        fixed_order_cost: Cost incurred when order > 0
+        shortage_cost: Cost per unit of unmet demand
+        wastage_cost: Cost per unit that expires
+        holding_cost: Cost per unit held in stock at the end of each period
     """
 
     def __init__(
         self,
         max_demand: int = 20,
-        # [M, T, W, T, F, S, S]
-        weekday_demand_negbin_n: List[float] = [3.5, 11.0, 7.2, 11.1, 5.9, 5.5, 2.2],
-        weekday_demand_negbin_delta: List[float] = [5.7, 6.9, 6.5, 6.2, 5.8, 3.3, 3.4],
+        weekday_demand_negbin_n: tuple[float, ...] = [
+            3.5,
+            11.0,
+            7.2,
+            11.1,
+            5.9,
+            5.5,
+            2.2,
+        ],
+        weekday_demand_negbin_delta: tuple[float, ...] = [
+            5.7,
+            6.9,
+            6.5,
+            6.2,
+            5.8,
+            3.3,
+            3.4,
+        ],
         max_useful_life: int = 3,
-        shelf_life_at_arrival_distribution_c_0: List[float] = [1.0, 0.5],
-        shelf_life_at_arrival_distribution_c_1: List[float] = [0.0, 0.0],
+        useful_life_at_arrival_distribution_c_0: tuple[float, ...] = [1.0, 0.5],
+        useful_life_at_arrival_distribution_c_1: tuple[float, ...] = [0.0, 0.0],
         max_order_quantity: int = 20,
         variable_order_cost: float = 0.0,
         fixed_order_cost: float = 10.0,
@@ -95,19 +153,19 @@ class MirjaliliPerishablePlatelet(Problem):
         assert (
             max_useful_life >= 1
         ), "max_useful_life must be greater than or equal to 1"
-        self._shelf_life_at_arrival_distribution_valid(
-            shelf_life_at_arrival_distribution_c_0,
-            shelf_life_at_arrival_distribution_c_1,
+        self._useful_life_at_arrival_distribution_valid(
+            useful_life_at_arrival_distribution_c_0,
+            useful_life_at_arrival_distribution_c_1,
             max_useful_life,
         )
 
         self.max_demand = max_demand
 
-        self.shelf_life_at_arrival_distribution_c_0 = jnp.array(
-            shelf_life_at_arrival_distribution_c_0
+        self.useful_life_at_arrival_distribution_c_0 = jnp.array(
+            useful_life_at_arrival_distribution_c_0
         )
-        self.shelf_life_at_arrival_distribution_c_1 = jnp.array(
-            shelf_life_at_arrival_distribution_c_1
+        self.useful_life_at_arrival_distribution_c_1 = jnp.array(
+            useful_life_at_arrival_distribution_c_1
         )
 
         self.weekday_demand_negbin_n = jnp.array(weekday_demand_negbin_n)
@@ -151,12 +209,18 @@ class MirjaliliPerishablePlatelet(Problem):
         pass
 
     @property
-    def _state_bounds(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _state_bounds(
+        self,
+    ) -> tuple[Float[Array, "state_dim"], Float[Array, "state_dim"]]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
         - First dimension: weekday [0, 6]
         - Next M dimensions: stock at each age [0, max_order_quantity]
+
+        Returns:
+            Tuple of (mins, maxs) where each array has shape [state_dim]
+            and state_dim = max_useful_life
         """
         mins = jnp.zeros(self.max_useful_life, dtype=jnp.int32)
         maxs = jnp.hstack(
@@ -169,16 +233,28 @@ class MirjaliliPerishablePlatelet(Problem):
         )
         return mins, maxs
 
-    def _construct_state_space(self) -> jnp.ndarray:
-        """Return array of states, weekday and stock."""
+    def _construct_state_space(self) -> StateSpace:
+        """Construct state space.
+
+        Returns:
+            Array containing all possible states [n_states, state_dim]
+        """
         return construct_space_from_bounds(self._state_bounds)
 
-    def _construct_action_space(self) -> jnp.ndarray:
-        """Return array of actions, order quantities from 0 to max_order_quantity."""
-        return jnp.arange(0, self.max_order_quantity + 1)
+    def _construct_action_space(self) -> ActionSpace:
+        """Construct action space.
 
-    def _construct_random_event_space(self) -> jnp.ndarray:
-        """Return array of random events, demand between 0 and max_demand."""
+        Returns:
+            Array containing all possible actions [n_actions, action_dim]
+        """
+        return jnp.arange(0, self.max_order_quantity + 1).reshape(-1, 1)
+
+    def _construct_random_event_space(self) -> RandomEventSpace:
+        """Construct random event space.
+
+        Returns:
+            Array containing all possible random events [n_events, event_dim]
+        """
         demands = np.arange(self.max_demand + 1).reshape(1, -1)
 
         # Generate all possible combinations of received order quantities split by age
@@ -209,19 +285,36 @@ class MirjaliliPerishablePlatelet(Problem):
         # Combine the two random elements - demand and remaining useful life on arrival
         return jnp.array(np.hstack([repeated_demands, repeated_valid_rec_combinations]))
 
-    def state_to_index(self, state: jnp.ndarray) -> int:
-        """Convert state vector to index."""
+    def state_to_index(self, state: StateVector) -> int:
+        """Convert state vector to index.
+
+        Args:
+            state: State vector to convert [state_dim]
+
+        Returns:
+            Integer index of the state in state_space
+        """
         return state_with_dimensions_to_index(state, self._state_dimensions)
 
     def random_event_probability(
-        self, state: jnp.ndarray, action: jnp.ndarray, random_event: jnp.ndarray
+        self,
+        state: StateVector,
+        action: ActionVector,
+        random_event: RandomEventVector,
     ) -> float:
-        """Compute probability of the random event given state and action.
+        """Compute probability of random event given state and action.
 
         Combines demand probabilities (based on weekday) with order receipt
         probabilities (based on action).
-        """
 
+        Args:
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            random_event: Random event vector [event_dim]
+
+        Returns:
+            Probability of this combination of demand and received stock
+        """
         weekday = state[self.state_component_lookup["weekday"]]
 
         # Get probabilities for demand component
@@ -239,11 +332,38 @@ class MirjaliliPerishablePlatelet(Problem):
 
     def transition(
         self,
-        state: chex.Array,
-        action: Union[int, chex.Array],
-        random_event: chex.Array,
-    ) -> Tuple[chex.Array, float]:
-        """A transition in the environment for a given state, action and random event"""
+        state: StateVector,
+        action: ActionVector,
+        random_event: RandomEventVector,
+    ) -> tuple[StateVector, Reward]:
+        """Compute next state and reward for inventory transition.
+
+        Processes one step of the platelet inventory system:
+        1. Place replenishment order
+        2. Immediately receive the order, where the remaining useful life of the
+            units at arrival is sampled from a multinomial distribution with
+            parameters that may depend on the order quantity
+        3. Sample demand from weekday-specific negative binomial distribution
+        4. Issue stock using OUFO (Oldest Units First Out) policy
+        5. Age remaining stock one period and discard expired units
+        6. Reward is negative of total costs:
+           - Variable ordering costs (per unit ordered)
+           - Fixed ordering costs (when order > 0)
+           - Shortage costs (per unit of unmet demand)
+           - Wastage costs (per unit that expires)
+           - Holding costs (per unit in stock at end of period, including expiring units)
+        7. Update weekday to next day of week
+
+        Args:
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            random_event: Random event vector [event_dim]
+
+        Returns:
+            Tuple of (next_state, reward) where:
+                - next_state is the resulting state vector [state_dim]
+                - reward is negative of total costs for this step
+        """
         demand = random_event[self.random_event_component_lookup["demand"]]
         max_stock_received = random_event[
             self.random_event_component_lookup["stock_received"]
@@ -284,26 +404,23 @@ class MirjaliliPerishablePlatelet(Problem):
             [variable_order, fixed_order, shortage, expiries, holding]
         )
 
+        reward = self._calculate_single_step_reward(
+            state, action, transition_function_reward_output
+        )
+
         # Update the weekday
         next_weekday = (state[self.state_component_lookup["weekday"]] + 1) % 7
 
         next_state = jnp.hstack([next_weekday, closing_stock]).astype(jnp.int32)
-
-        reward = self._calculate_single_step_reward(
-            state, action, transition_function_reward_output
-        )
 
         return next_state, reward
 
     def get_problem_config(self) -> MirjaliliPerishablePlateletConfig:
         """Get problem configuration for reconstruction.
 
-        This method should return a ProblemConfig instance containing all parameters
-        needed to reconstruct this problem instance. The config will be used during
-        checkpoint restoration to recreate the problem.
-
         Returns:
-            Problem configuration
+            Configuration containing all parameters needed to reconstruct
+            this problem instance
         """
         return MirjaliliPerishablePlateletConfig(
             max_demand=int(self.max_demand),
@@ -314,11 +431,11 @@ class MirjaliliPerishablePlatelet(Problem):
                 [float(x) for x in self.weekday_demand_negbin_delta]
             ),
             max_useful_life=int(self.max_useful_life),
-            shelf_life_at_arrival_distribution_c_0=tuple(
-                [float(x) for x in self.shelf_life_at_arrival_distribution_c_0]
+            useful_life_at_arrival_distribution_c_0=tuple(
+                [float(x) for x in self.useful_life_at_arrival_distribution_c_0]
             ),
-            shelf_life_at_arrival_distribution_c_1=tuple(
-                [float(x) for x in self.shelf_life_at_arrival_distribution_c_1]
+            useful_life_at_arrival_distribution_c_1=tuple(
+                [float(x) for x in self.useful_life_at_arrival_distribution_c_1]
             ),
             max_order_quantity=int(self.max_order_quantity),
             variable_order_cost=float(self.cost_components[0]),
@@ -328,69 +445,90 @@ class MirjaliliPerishablePlatelet(Problem):
             holding_cost=float(self.cost_components[4]),
         )
 
-    ###############################################
-    ### Supporting functions for self._init__() ###
-    ###############################################
+    # Supporting functions for __init__()
+    # ----------------------------------
 
-    def _shelf_life_at_arrival_distribution_valid(
+    def _useful_life_at_arrival_distribution_valid(
         self,
-        shelf_life_at_arrival_distribution_c_0: List[float],
-        shelf_life_at_arrival_distribution_c_1: List[float],
+        useful_life_at_arrival_distribution_c_0: list[float],
+        useful_life_at_arrival_distribution_c_1: list[float],
         max_useful_life: int,
     ) -> bool:
-        """Check that the shelf life at arrival distribution parameters are valid"""
+        """Check that the useful life at arrival distribution parameters are valid.
+
+        Args:
+            useful_life_at_arrival_distribution_c_0: Base logit parameters for useful life at arrival
+            useful_life_at_arrival_distribution_c_1: Order quantity multiplier for useful life logits
+            max_useful_life: Number of periods before stock expires
+
+        Returns:
+            True if parameters are valid, raises AssertionError otherwise
+        """
         assert (
-            len(shelf_life_at_arrival_distribution_c_0) == max_useful_life - 1
-        ), "Shelf life at arrival distribution params should include an item for c_0 \
+            len(useful_life_at_arrival_distribution_c_0) == max_useful_life - 1
+        ), "Useful life at arrival distribution params should include an item for c_0 \
             with max_useful_life - 1 parameters"
         assert (
-            len(shelf_life_at_arrival_distribution_c_1) == max_useful_life - 1
-        ), "Shelf life at arrival distribution params should include an item for c_1 \
+            len(useful_life_at_arrival_distribution_c_1) == max_useful_life - 1
+        ), "Useful life at arrival distribution params should include an item for c_1 \
             with max_useful_life - 1 parameters"
         return True
 
-    ################################################################
-    ### Supporting functions for self.transition() ###
-    ###############################################################
+    # Transition function helper methods
+    # ----------------------------------
 
-    def _construct_state_component_lookup(self) -> Dict[str, int | slice]:
-        """Return indices or slices for state components.
+    def _construct_state_component_lookup(self) -> dict[str, int | slice]:
+        """Build mapping from state components to indices.
 
-        Returns
-        -------
-        Dict[str, Union[int, slice]]
-            Maps component names to either:
-            - int: index for single element access
-            - slice: for subarray access
+        Returns:
+            Dictionary mapping component names to indices or slices:
+            - weekday: Index for weekday component
+            - stock: Slice for stock by age components
         """
         return {
             "weekday": 0,  # single index
             "stock": slice(1, self.max_useful_life),  # slice for array
         }
 
-    def _construct_action_component_lookup(self) -> Dict[str, int]:
-        """Return indices for action components."""
+    def _construct_action_component_lookup(self) -> dict[str, int]:
+        """Build mapping from action components to indices.
+
+        Returns:
+            Dictionary mapping component names to indices:
+            - order_quantity: Index for order quantity component
+        """
         return {
             "order_quantity": 0,
         }
 
-    def _construct_random_event_component_lookup(self) -> Dict[str, int | slice]:
-        """Return indices or slices for event components.
+    def _construct_random_event_component_lookup(self) -> dict[str, int | slice]:
+        """Build mapping from random event components to indices.
 
-        Returns
-        -------
-        Dict[str, Union[int, slice]]
-            Maps component names to either:
-            - int: index for single element access
-            - slice: for subarray access
+        Returns:
+            Dictionary mapping component names to indices or slices:
+            - demand: Index for demand component
+            - stock_received: Slice for stock received by age components
         """
         return {
             "demand": 0,  # single index
             "stock_received": slice(1, self.max_useful_life + 1),  # slice for array
         }
 
-    def _issue_oufo(self, opening_stock: chex.Array, demand: int) -> chex.Array:
-        """Issue stock using OUFO policy"""
+    def _issue_oufo(
+        self, opening_stock: Float[Array, "max_useful_life"], demand: int
+    ) -> Float[Array, "max_useful_life"]:
+        """Issue stock using OUFO (Oldest Units First Out) policy.
+
+        Issues stock starting with oldest items first (right side of vector).
+        Uses scan to process each age category in sequence.
+
+        Args:
+            opening_stock: Current stock levels by age [max_useful_life]
+            demand: Total customer demand to satisfy
+
+        Returns:
+            Updated stock levels after issuing [max_useful_life]
+        """
         # Oldest stock on RHS of vector, so reverse
         _, remaining_stock = jax.lax.scan(
             self._issue_one_step, demand, opening_stock, reverse=True
@@ -399,46 +537,84 @@ class MirjaliliPerishablePlatelet(Problem):
 
     def _issue_one_step(
         self, remaining_demand: int, stock_element: int
-    ) -> Tuple[int, int]:
-        """Fill demand with stock of one age, representing one element in the state"""
+    ) -> tuple[int, int]:
+        """Process one age category during stock issuing.
+
+        Args:
+            remaining_demand: Unfulfilled demand to satisfy
+            stock_element: Available stock of current age
+
+        Returns:
+            Tuple of (remaining_demand, remaining_stock) where:
+                - remaining_demand is unfulfilled demand after this age
+                - remaining_stock is stock left in this age category
+        """
         remaining_stock = (stock_element - remaining_demand).clip(0)
         remaining_demand = (remaining_demand - stock_element).clip(0)
         return remaining_demand, remaining_stock
 
     def _calculate_single_step_reward(
         self,
-        state: chex.Array,
-        action: Union[int, chex.Array],
-        transition_function_reward_output: chex.Array,
-    ) -> float:
-        """Calculate the single step reward based on the provided state, action and
-        output from the transition function"""
-        # Minus one to reflect the fact that they are costs
+        state: StateVector,
+        action: ActionVector,
+        transition_function_reward_output: Float[Array, "5"],
+    ) -> Reward:
+        """Calculate reward (negative costs) for one transition step.
+
+        Computes total reward by combining:
+        - Variable ordering costs (per unit ordered)
+        - Fixed ordering costs (when order > 0)
+        - Shortage costs (per unit of unmet demand)
+        - Wastage costs (per unit that expires)
+        - Holding costs (per unit in stock at end of period, including units about to expire)
+
+        Args:
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            transition_function_reward_output: Array of cost components [5]
+
+        Returns:
+            Negative of total costs for this step
+        """
         cost = jnp.dot(transition_function_reward_output, self.cost_components)
         reward = -1 * cost
         return reward
 
-    ###############################################################
-    ### Supporting function for self.random_event_probabilities() ###
-    ###############################################################
+    # Random event probability helper methods
+    # ---------------------------------------
 
-    def _get_multinomial_logits(self, action: int) -> chex.Array:
-        """Return multinomial logits for a given order quantity action"""
-        c_0 = self.shelf_life_at_arrival_distribution_c_0
-        c_1 = self.shelf_life_at_arrival_distribution_c_1
+    def _get_multinomial_logits(self, action: int) -> Float[Array, "max_useful_life"]:
+        """Calculate multinomial logits for useful life at arrival distribution.
+
+        Args:
+            action: Order quantity
+
+        Returns:
+            Array of logits for each possible useful life [max_useful_life]
+        """
+        c_0 = self.useful_life_at_arrival_distribution_c_0
+        c_1 = self.useful_life_at_arrival_distribution_c_1
         # Assume logit for useful_life=1 is 0, concatenate with logits
         # for other ages using provided coefficients and order size action
 
-        # Parameters are provided in ascending remaining shelf life
+        # Parameters are provided in ascending remaining useful life
         # So reverse to match ordering of stock array which is in
         # descending order of remaining useful life so that oldest
         # units are on the RHS
         return jnp.hstack([0, c_0 + (c_1 * action)])[::-1]
 
-    def _calculate_demand_probabilities(self, weekday: int) -> jnp.ndarray:
+    def _calculate_demand_probabilities(
+        self, weekday: int
+    ) -> Float[Array, "max_demand_plus_one"]:
         """Calculate probabilities for each possible demand value.
 
         Uses negative binomial distribution with weekday-specific parameters.
+
+        Args:
+            weekday: Current weekday (0=Monday to 6=Sunday)
+
+        Returns:
+            Array of probabilities for each demand value [max_demand + 1]
         """
         n = self.weekday_demand_negbin_n[weekday]
         p = self.weekday_demand_negbin_p[weekday]
@@ -455,11 +631,18 @@ class MirjaliliPerishablePlatelet(Problem):
         return demand_probs
 
     def _calculate_received_order_probabilities(
-        self, action: int, received_order: jnp.ndarray
-    ) -> jnp.ndarray:
+        self, action: int, received_order: Float[Array, "max_useful_life"]
+    ) -> float:
         """Calculate probabilities for each possible order receipt combination.
 
-        Uses multinomial distribution with logits based on shelf life parameters.
+        Uses multinomial distribution with logits based on useful life parameters.
+
+        Args:
+            action: Order quantity
+            received_order: Stock received by age [max_useful_life]
+
+        Returns:
+            Probability of this combination of received stock by age
         """
         multinomial_logits = self._get_multinomial_logits(action)
         dist = numpyro.distributions.Multinomial(

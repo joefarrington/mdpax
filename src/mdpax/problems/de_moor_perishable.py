@@ -47,17 +47,14 @@ class DeMoorPerishable(Problem):
     Original paper: https://doi.org/10.1016/j.ejor.2021.10.045
 
     Models a single-product, single-echelon, periodic review perishable
-    inventory replenishment problem with:
-    - Deterministic lead time for orders
-    - Deterministic maximum useful life for stock
-    - Gamma-distributed demand
-    - FIFO/LIFO issuing policies
-    - Variable ordering, shortage, wastage and holding costs
+    inventory replenishment problem where all stock has the same remaining
+    useful life at arrival.
 
     State Space (state_dim = lead_time + max_useful_life - 1):
         Vector containing:
         - Orders in transit: [lead_time-1] elements in range [0, max_order_quantity]
-        - Stock by age: [max_useful_life] elements in range [0, max_order_quantity]
+        - Stock by age: [max_useful_life] elements in range [0, max_order_quantity],
+          ordered with oldest units on the right
 
     Action Space (action_dim = 1):
         Vector containing:
@@ -68,12 +65,16 @@ class DeMoorPerishable(Problem):
         - Demand: 1 element in range [0, max_demand]
 
     Dynamics:
-        1. Sample demand from truncated, discretized gamma distribution
-        2. Issue stock using FIFO or LIFO policy
-        3. Age remaining stock one period and discard expired units
-        4. Reward is negative of total costs
-            (variable ordering, shortage, wastage, holding)
-        5. Receive order placed lead_time - 1 periods ago immediately
+        1. Place replenishment order
+        2. Sample demand from truncated, discretized gamma distribution
+        3. Issue stock using FIFO or LIFO policy
+        4. Age remaining stock one period and discard expired units
+        5. Reward is negative of total costs:
+           - Variable ordering costs (per unit ordered)
+           - Shortage costs (per unit of unmet demand)
+           - Wastage costs (per unit that expires)
+           - Holding costs (per unit in stock at end of period)
+        6. Receive order placed lead_time - 1 periods ago immediately
             before the next period
 
     Args:
@@ -128,8 +129,10 @@ class DeMoorPerishable(Problem):
         self.issue_policy = issue_policy
         if self.issue_policy == "fifo":
             self._issue_stock = self._issue_fifo
-        else:
+        elif self.issue_policy == "lifo":
             self._issue_stock = self._issue_lifo
+        else:
+            raise ValueError(f"Invalid issuing policy: {self.issue_policy}")
 
         super().__init__()
 
@@ -187,7 +190,9 @@ class DeMoorPerishable(Problem):
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
     @property
-    def _state_bounds(self) -> tuple[Float[Array, "n_dims"], Float[Array, "n_dims"]]:
+    def _state_bounds(
+        self,
+    ) -> tuple[Float[Array, "state_dim"], Float[Array, "state_dim"]]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
@@ -195,12 +200,12 @@ class DeMoorPerishable(Problem):
         - Next M dimensions: stock at each age [0, max_order_quantity]
 
         Returns:
-            Tuple of (mins, maxs) where each array has shape [n_dims]
-            and n_dims = lead_time-1 + max_useful_life
+            Tuple of (mins, maxs) where each array has shape [state_dim]
+            and state_dim = lead_time-1 + max_useful_life
         """
-        n_dims = self.max_useful_life + self.lead_time - 1
-        mins = jnp.zeros(n_dims, dtype=jnp.int32)
-        maxs = jnp.full(n_dims, self.max_order_quantity, dtype=jnp.int32)
+        state_dim = self.max_useful_life + self.lead_time - 1
+        mins = jnp.zeros(state_dim, dtype=jnp.int32)
+        maxs = jnp.full(state_dim, self.max_order_quantity, dtype=jnp.int32)
         return mins, maxs
 
     def state_to_index(self, state: StateVector) -> int:
@@ -242,10 +247,17 @@ class DeMoorPerishable(Problem):
         """Compute next state and reward for inventory transition.
 
         Processes one step of the perishable inventory system:
-        1. Receives demand from random event
-        2. Issues stock according to policy (FIFO/LIFO)
-        3. Ages remaining stock and receives orders in transit
-        4. Calculates costs from ordering, shortages, and holding
+        1. Place replenishment order
+        2. Sample demand from truncated, discretized gamma distribution
+        3. Issue stock using FIFO or LIFO policy
+        4. Age remaining stock one period and discard expired units
+        5. Reward is negative of total costs:
+           - Variable ordering costs (per unit ordered)
+           - Shortage costs (per unit of unmet demand)
+           - Wastage costs (per unit that expires)
+           - Holding costs (per unit in stock at end of period)
+        6. Receive order placed lead_time - 1 periods ago immediately
+            before the next period
 
         Args:
             state: Current state vector [state_dim] containing:

@@ -50,17 +50,16 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     Original paper: https://doi.org/10.1002/cmm4.1027
 
     Models a two-product, single-echelon, periodic review perishable
-    inventory replenishment problem with:
-    - Two products (A and B) with substitution from A to B
-    - Deterministic maximum useful life for stock
-    - Poisson-distributed demand for each product
-    - FIFO issuing policy
-    - Variable ordering costs and sales revenue
+    inventory replenishment problem where all stock has the same remaining
+    useful life at arrival and there is the possibility for substution between
+    products.
 
     State Space (state_dim = 2 * max_useful_life):
         Vector containing:
-        - Product A stock by age: [max_useful_life] elements in range [0, max_order_quantity_a]
-        - Product B stock by age: [max_useful_life] elements in range [0, max_order_quantity_b]
+        - Product A stock by age: [max_useful_life] elements in range [0, max_order_quantity_a],
+          ordered with oldest units on the right
+        - Product B stock by age: [max_useful_life] elements in range [0, max_order_quantity_b],
+          ordered with oldest units on the right
 
     Action Space (action_dim = 2):
         Vector containing:
@@ -73,13 +72,14 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         - Product B units issued: 1 element in range [0, max_stock_b]
 
     Dynamics:
-        1. Random event determines units issued of each product, incorporating both:
+        1. Place replenishment order
+        2. Random event determines units issued of each product, incorporating both:
            - Poisson-distributed demand for each product
            - Possible substitution from A to B when B's demand exceeds stock
-        2. Issue stock using FIFO policy for each product
-        3. Age remaining stock one period and discard expired units
-        4. Reward is revenue from units issued less variable ordering costs
-        5. Receive order placed at the start of the period immediately before the next period
+        3. Issue stock using FIFO policy for each product
+        4. Age remaining stock one period and discard expired units
+        5. Reward is revenue from units issued less variable ordering costs
+        6. Receive order placed at the start of the period immediately before the next period
 
     Note:
         The three random elements in the transition are the demand for each product and
@@ -165,17 +165,18 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         self.pz = self._calculate_pz()
 
     @property
-    def _state_bounds(self) -> tuple[Float[Array, "n_dims"], Float[Array, "n_dims"]]:
+    def _state_bounds(
+        self,
+    ) -> tuple[Float[Array, "state_dim"], Float[Array, "state_dim"]]:
         """Return min and max values for each state dimension.
 
         State dimensions are:
         - First max_useful_life dimensions: stock at each age for product A [0, max_order_quantity_a]
         - Next max_useful_life dimensions: stock at each age for product B [0, max_order_quantity_b]
 
-
         Returns:
-            Tuple of (mins, maxs) where each array has shape [n_dims]
-            and n_dims = 2 * max_useful_life
+            Tuple of (mins, maxs) where each array has shape [state_dim]
+            and state_dim = 2 * max_useful_life
         """
         mins = jnp.zeros(2 * self.max_useful_life, dtype=jnp.int32)
         maxs = jnp.hstack(
@@ -220,8 +221,13 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     @property
     def _random_event_bounds(
         self,
-    ) -> tuple[Float[Array, "n_dims"], Float[Array, "n_dims"]]:
-        """Return min and max values for each random event dimension."""
+    ) -> tuple[Float[Array, "event_dim"], Float[Array, "event_dim"]]:
+        """Return min and max values for each random event dimension.
+
+        Returns:
+            Tuple of (mins, maxs) where each array has shape [event_dim]
+            and event_dim = 2
+        """
         mins = jnp.array([0, 0])
         maxs = jnp.array([self.max_stock_a, self.max_stock_b])
         return mins, maxs
@@ -270,11 +276,14 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         """Compute next state and reward for inventory transition.
 
         Processes one step of the two-product perishable inventory system:
-        1. Total demand for each product (incluing substitution) that can be met is
-           given by the random event vector
-        2. Issues stock using FIFO policy, with possible substitution from A to B
-        3. Ages remaining stock and receives orders
-        4. Calculates revenue and costs
+        1. Place replenishment order
+        2. Random event determines units issued of each product, incorporating both:
+           - Poisson-distributed demand for each product
+           - Possible substitution from A to B when B's demand exceeds stock
+        3. Issue stock using FIFO policy for each product
+        4. Age remaining stock one period and discard expired units
+        5. Reward is revenue from units issued less variable ordering costs
+        6. Receive order placed at the start of the period immediately before the next period
 
         Args:
             state: Current state vector [state_dim] containing:
@@ -297,6 +306,11 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         stock_after_issue_a = self._issue_fifo(opening_stock_a, issued_a)
         stock_after_issue_b = self._issue_fifo(opening_stock_b, issued_b)
 
+        # Pass through the random outcome (units issued)
+        single_step_reward = self._calculate_single_step_reward(
+            state, action, random_event
+        )
+
         # Age stock one day and receive the order from the morning
         closing_stock_a = jnp.hstack(
             [
@@ -313,10 +327,6 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
 
         next_state = jnp.concatenate([closing_stock_a, closing_stock_b], axis=-1)
 
-        # Pass through the random outcome (units issued)
-        single_step_reward = self._calculate_single_step_reward(
-            state, action, random_event
-        )
         return (
             next_state,
             single_step_reward,
@@ -597,7 +607,11 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     def _calculate_sales_revenue_for_possible_random_events(
         self,
     ) -> Float[Array, "n_events"]:
-        """Calculate the sales revenue for each possible random event."""
+        """Calculate the sales revenue for each possible random event.
+
+        Returns:
+            Array of sales revenue for each possible random event [n_events]
+        """
         return (self.random_event_space.dot(self.sales_prices)).reshape(-1)
 
     def _calculate_expected_sales_revenue(self, state: StateVector) -> float:
