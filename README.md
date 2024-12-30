@@ -209,7 +209,7 @@ The software package:
 
 `mdpax` is released under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-The forest management example problem is adapted from [pymdptoolbox](https://github.com/sawcordwell/pymdptoolbox) (BSD 3-Clause License, Copyright (c) 2011-2013 Steven A. W. Cordwell and Copyright (c) 2009 INRIA). Our implementation is original, using the `mdpax.Problem` class. 
+The forest management example problem is adapted from [pymdptoolbox](https://github.com/sawcordwell/pymdptoolbox) (BSD 3-Clause License, Copyright (c) 2011-2013 Steven A. W. Cordwell and Copyright (c) 2009 INRIA). Our implementation is original, using the `mdpax.core.problems.Problem` class. 
 
 ## Related Projects
 
