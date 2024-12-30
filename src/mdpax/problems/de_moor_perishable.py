@@ -44,6 +44,8 @@ class DeMoorPerishableConfig(ProblemConfig):
 class DeMoorPerishable(Problem):
     """Perishable inventory MDP problem from De Moor et al. (2022).
 
+    Original paper: https://doi.org/10.1016/j.ejor.2021.10.045
+
     Models a single-product, single-echelon, periodic review perishable
     inventory replenishment problem with:
     - Deterministic lead time for orders
@@ -52,23 +54,27 @@ class DeMoorPerishable(Problem):
     - FIFO/LIFO issuing policies
     - Variable ordering, shortage, wastage and holding costs
 
-    State Space:
-        Vector [lead_time + max_useful_life - 1] containing:
-        - Orders in transit, [lead_time-1] elements
-        - Current stock levels by age, [max_useful_life] elements
+    State Space (state_dim = lead_time + max_useful_life - 1):
+        Vector containing:
+        - Orders in transit: [lead_time-1] elements in range [0, max_order_quantity]
+        - Stock by age: [max_useful_life] elements in range [0, max_order_quantity]
 
-    Action Space:
-        Single order quantity [0, max_order_quantity]
+    Action Space (action_dim = 1):
+        Vector containing:
+        - Order quantity: 1 element in range [0, max_order_quantity]
 
-    Random Events:
-        Single demand value [0, max_demand] following a discretized
-        gamma distribution
+    Random Events (event_dim = 1):
+        Vector containing:
+        - Demand: 1 element in range [0, max_demand]
 
     Dynamics:
-        1. Receive demand from random event
-        2. Issue stock according to policy (FIFO/LIFO)
-        3. Age remaining stock and receive orders in transit
-        4. Calculate costs (ordering, shortages, wastage, holding)
+        1. Sample demand from truncated, discretized gamma distribution
+        2. Issue stock using FIFO or LIFO policy
+        3. Age remaining stock one period and discard expired units
+        4. Reward is negative of total costs
+            (variable ordering, shortage, wastage, holding)
+        5. Receive order placed lead_time - 1 periods ago immediately
+            before the next period
 
     Args:
         max_demand: Maximum possible demand per period

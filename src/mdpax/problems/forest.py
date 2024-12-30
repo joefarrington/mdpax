@@ -45,23 +45,22 @@ class Forest(Problem):
     Adapted from the example problem in Python MDP Toolbox
     https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/example.py
 
-    State Space:
-        Single integer [1] representing tree age from 0 (newly planted)
-        to S-1 (mature forest)
+    State Space (state_dim = 1):
+        Vector containing:
+        - Tree age: 1 element in range [0, S-1] (newly planted to mature forest)
 
-    Action Space:
-        Binary decision [1]:
-        - 0: Wait (let trees continue growing)
-        - 1: Cut (harvest all trees)
+    Action Space (action_dim = 1):
+        Vector containing:
+        - Decision: 1 element in range {0=wait, 1=cut}
 
-    Random Events:
-        Binary event [1]:
-        - 0: No fire occurs
-        - 1: Fire occurs (destroys forest)
+    Random Events (event_dim = 1):
+        Vector containing:
+        - Fire occurrence: 1 element in range {0=no_fire, 1=fire}
 
     Dynamics:
         1. Choose to cut or wait
-        2. If cut, receive age-dependent reward and reset to age 0
+        2. If cut, receive reward r2 if in oldest state and 1 otherwise
+            and reset to age 0
         3. If wait:
             - Check for fire (probability p if waiting, 0 if cut)
             - If fire, reset to age 0 with no reward
@@ -95,19 +94,26 @@ class Forest(Problem):
         """Build array of all possible states.
 
         Returns:
-            Array of shape [n_states, 1] containing all possible tree ages
+            Array of shape [n_states, state_dim] containing all possible tree ages
         """
         return jnp.arange(self.S, dtype=jnp.int32).reshape(-1, 1)
 
     def state_to_index(self, state: StateVector) -> int:
-        """Convert state vector to index."""
+        """Convert state vector to index.
+
+        Args:
+            state: State vector to convert [state_dim]
+
+        Returns:
+            Integer index of the state in state_space
+        """
         return state[0]
 
     def _construct_action_space(self) -> ActionSpace:
         """Build array of all possible actions.
 
         Returns:
-            Array of shape [2, 1] containing actions [wait=0, cut=1]
+            Array of shape [n_actions, action_dim] containing actions [wait=0, cut=1]
         """
         return jnp.array([[0], [1]], dtype=jnp.int32)
 
@@ -115,7 +121,7 @@ class Forest(Problem):
         """Build array of all possible random events.
 
         Returns:
-            Array of shape [2, 1] containing events [no_fire=0, fire=1]
+            Array of shape [n_events, event_dim] containing events [no_fire=0, fire=1]
         """
         return jnp.array([[0], [1]], dtype=jnp.int32)
 
@@ -132,9 +138,9 @@ class Forest(Problem):
             - Fire probability is 0
 
         Args:
-            state: Current tree age [1]
-            action: Cut (1) or wait (0) [1]
-            random_event: Fire (1) or no fire (0) [1]
+            state: Current tree age [state_dim]
+            action: Cut (1) or wait (0) [action_dim]
+            random_event: Fire (1) or no fire (0) [event_dim]
 
         Returns:
             Probability of the random event occurring
@@ -150,13 +156,13 @@ class Forest(Problem):
         The reward is 1 for cutting except in the final state, where it is r2.
 
         Args:
-            state: Current tree age [1]
-            action: Cut (1) or wait (0) [1]
-            random_event: Fire (1) or no fire (0) [1]
+            state: Current tree age [state_dim]
+            action: Cut (1) or wait (0) [action_dim]
+            random_event: Fire (1) or no fire (0) [event_dim]
 
         Returns:
             Tuple of (next_state, reward) where:
-                - next_state is the next tree age [1]
+                - next_state is the next tree age [state_dim]
                 - reward is the immediate reward for this transition
         """
         is_cut = action[0] == 1
