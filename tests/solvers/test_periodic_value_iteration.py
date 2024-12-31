@@ -8,20 +8,34 @@ from mdpax.problems.mirjalili_perishable_platelet import MirjaliliPerishablePlat
 from mdpax.solvers.periodic_value_iteration import PeriodicValueIteration
 
 
-# Compare policy output from new implementation with joefarrington/viso_jax
-class TestPolicy:
+class TestPeriodicValueIterationPolicy:
+    """Tests for Periodic Value Iteration solver using Mirjalili problem.
+
+    Compares policies against reference results from implementation
+    in viso_jax. These tests verify the solver produces correct policies
+    for a moderately-sized problem with periodic demand (~5-20s runtime).
+
+        Additional problem specific tests are in tests/problems/test_mirjalili.py
+    """
+
     @pytest.mark.parametrize(
         "reported_policy_filename",
         [
             pytest.param(
                 "mirjalili_m3_exp1_visojax.csv",
-                id="m3/exp1",
+                id="mirjalili/m3/exp1",
             ),
         ],
     )
-    def test_policy_same_as_reported(
+    def test_matches_reference_policy(
         self, tmpdir, shared_datadir, reported_policy_filename
     ):
+        """Test policy matches results from original implementation.
+
+        Verifies that our implementation produces the same policies as the
+        viso_jax implementation for a platelet inventory problem
+        with weekday-dependent demand patterns.
+        """
         # Change working directory to avoid clutter
         os.chdir(tmpdir)
 
@@ -36,10 +50,13 @@ class TestPolicy:
         )
         result = solver.solve()
         policy = result.policy.reshape(-1)
+
         # Load in the reported policy
         reported_policy = pd.read_csv(
             f"{shared_datadir}/{reported_policy_filename}",
             index_col=0,
             header=0,
         )
-        assert np.all(reported_policy.values.reshape(-1) == policy)
+        assert np.all(
+            reported_policy.values.reshape(-1) == policy
+        ), "Policy doesn't match"

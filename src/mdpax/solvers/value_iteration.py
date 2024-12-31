@@ -407,7 +407,7 @@ class ValueIteration(Solver, CheckpointMixin):
         logger.success("Value iteration completed")
         return self.solver_state
 
-    def get_solver_config(self) -> ValueIterationConfig:
+    def _get_solver_config(self) -> ValueIterationConfig:
         """Get solver configuration for reconstruction.
 
         Returns:

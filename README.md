@@ -1,6 +1,6 @@
 # mdpax
 
-`mdpax` is designed for researchers and practitioners who want to solve large Markov Decision Process (MDP) problems but don't want to become experts in GPU programming. By using JAX, we can take advantage of the massive parallel processing power of GPUs while describing new problems using a simple Python interface.
+`mdpax` is designed for researchers and practitioners who want to solve large Markov Decision Process (MDP) problems but don't want to become experts in graphics processing unit (GPU) programming. By using JAX, we can take advantage of the massive parallel processing power of GPUs while describing new problems using a simple Python interface.
 
 You can run `mdpax` on your local GPU, or try it for free using [Google Colab](https://colab.research.google.com/), which provides access to GPUs in the cloud with no setup required.
 
@@ -13,7 +13,7 @@ You can run `mdpax` on your local GPU, or try it for free using [Google Colab](h
 
 ## Overview
 
-`mdpax` is a Python package for solving large-scale Markov Decision Processes (MDPs), leveraging JAX's support for vectorization, parallelization, and just-in-time (JIT) compilation on graphics processing units (GPUs). 
+`mdpax` is a Python package for solving large-scale MDPs, leveraging JAX's support for vectorization, parallelization, and just-in-time (JIT) compilation on GPUs. 
 
 The package is adapted from the research code developed in [Farrington et al (2023)](https://arxiv.org/abs/2303.10672). We demonstrated that this approach is particularly well-suited for perishable inventory management problems where the state space grows exponentially with the number of products and the maximum useful life of the products. By implementing the problems in JAX and using consumer-grade GPUs (or freely available GPUs on services such as Google Colab) it is possible to compute the exact solution for realistically sized perishable inventory problems where this was recently reported to be infeasible or impractical.
 
@@ -28,6 +28,7 @@ Traditional value iteration implementations face two main challenges with large 
    - `pmap` to parallelize across multiple GPU devices where available
    - `jit` to compile operations once and reuse them efficiently across many value iteration steps
 
+While `mdpax` can run on CPU or GPU hardware, it is specifically designed for large problems (millions of states) on GPU. For small to medium-sized problems, especially when running on CPU, existing packages like [pymdptoolbox](https://github.com/sawcordwell/pymdptoolbox) may be more efficient due to JAX's JIT compilation overhead and GPU memory transfer costs. These overheads become negligible for larger problems where the benefits of parallelization and vectorization dominate.
 
 ## Installation
 

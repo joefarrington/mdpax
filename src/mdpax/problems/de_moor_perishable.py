@@ -10,7 +10,7 @@ from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.spaces import (
     construct_space_from_bounds,
     space_dimensions_from_bounds,
-    state_with_dimensions_to_index,
+    space_with_dimensions_to_index,
 )
 from mdpax.utils.types import (
     ActionSpace,
@@ -217,7 +217,7 @@ class DeMoorPerishable(Problem):
         Returns:
             Integer index of the state in state_space
         """
-        return state_with_dimensions_to_index(state, self._state_dimensions)
+        return space_with_dimensions_to_index(state, self._state_dimensions)
 
     def random_event_probability(
         self,

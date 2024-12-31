@@ -12,7 +12,7 @@ from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.spaces import (
     construct_space_from_bounds,
     space_dimensions_from_bounds,
-    state_with_dimensions_to_index,
+    space_with_dimensions_to_index,
 )
 from mdpax.utils.types import (
     ActionSpace,
@@ -341,11 +341,11 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         Returns:
             Integer index of the state in state_space
         """
-        return state_with_dimensions_to_index(state, self._state_dimensions)
+        return space_with_dimensions_to_index(state, self._state_dimensions)
 
     def _random_event_to_index(self, random_event: RandomEventVector) -> int:
         """Convert random event vector to index."""
-        return state_with_dimensions_to_index(
+        return space_with_dimensions_to_index(
             random_event, self._random_event_dimensions
         )
 

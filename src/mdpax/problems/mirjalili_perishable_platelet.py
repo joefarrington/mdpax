@@ -13,7 +13,7 @@ from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.spaces import (
     construct_space_from_bounds,
     space_dimensions_from_bounds,
-    state_with_dimensions_to_index,
+    space_with_dimensions_to_index,
 )
 from mdpax.utils.types import (
     ActionSpace,
@@ -92,7 +92,7 @@ class MirjaliliPerishablePlatelet(Problem):
         2. Immediately receive the order, where the remaining useful life of the
             units at arrival is sampled from a multinomial distribution with
             parameters that may depend on the order quantity
-        3. Sample demand from weekday-specific negative binomial distribution
+        3. Sample demand from weekday-specific truncated negative binomial distribution
         4. Issue stock using OUFO (Oldest Units First Out) policy
         5. Age remaining stock one period and discard expired units
         6. Reward is negative of total costs:
@@ -116,6 +116,13 @@ class MirjaliliPerishablePlatelet(Problem):
         shortage_cost: Cost per unit of unmet demand
         wastage_cost: Cost per unit that expires
         holding_cost: Cost per unit held in stock at the end of each period
+
+    Notes:
+        - In the original paper, the demand distribution is a truncated negative
+          binomial distribution over the number of failured before reaching a specified
+          number of successed parameterized by n (target number of successes)
+          and delta (expected value).
+        - The probability of success of a trial is n/(n + delta).
     """
 
     def __init__(
@@ -294,7 +301,7 @@ class MirjaliliPerishablePlatelet(Problem):
         Returns:
             Integer index of the state in state_space
         """
-        return state_with_dimensions_to_index(state, self._state_dimensions)
+        return space_with_dimensions_to_index(state, self._state_dimensions)
 
     def random_event_probability(
         self,
