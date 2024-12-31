@@ -149,21 +149,30 @@ See `pyproject.toml` for the full list of development dependencies.
 
 ## Contributing
 
-Contributions are welcome! Here's how you can help:
+`mdpax` is a new library aimed at researchers and practitioners. As we're in the early stages of development, we particularly welcome feedback on the API design and suggestions for how we can make the library more accessible to users with different backgrounds and experience levels. Our goal is to make using GPUs to solve large MDPs as straightforward as possible while maintaining the flexibility needed for research applications.
 
-1. **Bug Reports**: Open an issue describing:
+Contributions are welcome in many forms:
+
+1. **API and Documentation Feedback**:
+   - Is the API intuitive for your use case?
+   - Are there concepts that need better explanation?
+   - Would additional examples help?
+   
+   - Open an issue with your suggestions or questions
+
+2. **Bug Reports**: Open an issue describing:
    - What you were trying to do
    - What you expected to happen
    - What actually happened
    - Steps to reproduce the issue
 
-2. **Feature Requests**: 
+3. **Feature Requests**: 
     Open an issue describing:
    - The use case for the feature
    - Any relevant references (papers, implementations)
    - Possible implementation approaches
 
-3. **Pull Requests**: For code contributions:
+4. **Pull Requests**: For code contributions:
    - Open an issue first to discuss the proposed changes
    - Fork the repository
    - Create a new branch for your feature
@@ -172,7 +181,7 @@ Contributions are welcome! Here's how you can help:
    - Update documentation as needed
    - Submit a PR referencing the original issue
 
-4. **New Problem Implementations**: We're particularly interested in helping users implement new MDP problems:
+5. **New Problem Implementations**: We're particularly interested in helping users implement new MDP problems:
    - Open an issue describing the problem and citing any relevant papers
    - We can help with the implementation approach and best practices
    - This is a great way to contribute while learning the package
