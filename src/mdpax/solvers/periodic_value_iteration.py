@@ -12,6 +12,7 @@ from loguru import logger
 from mdpax.core.problem import Problem
 from mdpax.core.solver import SolverInfo, SolverState
 from mdpax.solvers.value_iteration import ValueIteration, ValueIterationConfig
+from mdpax.utils.logging import get_convergence_format
 from mdpax.utils.types import (
     ValueFunction,
 )
@@ -147,6 +148,9 @@ class PeriodicValueIteration(ValueIteration):
             enable_async_checkpointing=enable_async_checkpointing,
         )
 
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(epsilon)
+
         # Initialize value history in CPU memory
         self.value_history = np.zeros((period + 1, problem.n_states))
         self.history_index: int = 0
@@ -215,7 +219,9 @@ class PeriodicValueIteration(ValueIteration):
             new_values, conv = self._iteration_step()
             self.values = new_values
 
-            logger.info(f"Iteration {self.iteration}: period_span: {conv:.4f}")
+            logger.info(
+                f"Iteration {self.iteration}: period_span: {conv:{self.convergence_format}}"
+            )
 
             # Check convergence
             if conv < self.epsilon:

@@ -15,6 +15,7 @@ from mdpax.core.solver import (
     SolverWithCheckpointConfig,
 )
 from mdpax.utils.checkpointing import CheckpointMixin
+from mdpax.utils.logging import get_convergence_format
 from mdpax.utils.types import (
     ActionSpace,
     ActionVector,
@@ -109,6 +110,9 @@ class ValueIteration(Solver, CheckpointMixin):
             if self.gamma == 1
             else self.epsilon * (1 - self.gamma) / self.gamma
         )
+
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(float(self._thresh))
 
         self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_updated_value_scan_state_batches,
@@ -401,7 +405,9 @@ class ValueIteration(Solver, CheckpointMixin):
             new_values, conv = self._iteration_step()
             self.values = new_values
 
-            logger.info(f"Iteration {self.iteration} span: {conv:.4f}")
+            logger.info(
+                f"Iteration {self.iteration} span: {conv:{self.convergence_format}}"
+            )
 
             if conv < self._thresh:
                 logger.info(

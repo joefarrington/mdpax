@@ -10,6 +10,7 @@ from loguru import logger
 from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.core.solver import SolverInfo, SolverState
 from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.utils.logging import get_convergence_format
 from mdpax.utils.types import ValueFunction
 
 
@@ -116,6 +117,8 @@ class RelativeValueIteration(ValueIteration):
             max_checkpoints=max_checkpoints,
             enable_async_checkpointing=enable_async_checkpointing,
         )
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(epsilon)
         self.gain = 0.0  # Initialize gain term for average reward
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
@@ -166,7 +169,7 @@ class RelativeValueIteration(ValueIteration):
             self.values = new_values
 
             logger.info(
-                f"Iteration {self.iteration}: span: {conv:.4f}, gain: {self.gain:.4f}"
+                f"Iteration {self.iteration}: span: {conv:{self.convergence_format}}, gain: {self.gain:.4f}"
             )
 
             if conv < self.epsilon:
