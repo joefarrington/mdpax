@@ -22,10 +22,10 @@ class CheckpointMixin(ABC):
     reconstruction of the solver.
 
     Note:
-        Saving and restoring checkpoints relies on the problem have a config attribute and
-        checkpointing will not be enabled if the problem does not have a config attribute.
-        All of the example Problems have configs but this is not a requirement because, it
-        requires the Problem to be defined in a module that is importable by Hydra.
+        Saving and restoring checkpoints relies on the Problem and Solver each having a config
+        attribute and checkpointing will not be enabled if either does not have a config
+        attribute. All of the example Problems and Solvers have configs but this is not a
+        requirement because, it requires them to be defined in a module that is importable by Hydra.
 
     Attributes:
         checkpoint_dir (Path): Directory where checkpoints are stored.
@@ -85,6 +85,24 @@ class CheckpointMixin(ABC):
         if max_checkpoints < 0:
             raise ValueError("max_checkpoints must be non-negative")
 
+        # Ensure both problem and solver have config attributes
+        if not hasattr(self.problem, "config"):
+            logger.warning(
+                "Problem does not have a config attribute. "
+                "Checkpointing requires a config for complete state restoration. "
+                "Disabling checkpointing."
+            )
+            self.checkpoint_frequency = 0
+            return
+        elif not hasattr(self, "config"):
+            logger.warning(
+                "Solver does not have a config attribute. "
+                "Checkpointing requires a config for complete state restoration. "
+                "Disabling checkpointing."
+            )
+            self.checkpoint_frequency = 0
+            return
+
         # Store basic settings
         self.checkpoint_frequency = checkpoint_frequency
         self.max_checkpoints = max_checkpoints
@@ -94,16 +112,6 @@ class CheckpointMixin(ABC):
         # Early return if checkpointing not requested
         if checkpoint_frequency == 0:
             logger.info("Checkpointing not enabled")
-            return
-
-        # Check if problem has config attribute
-        if not hasattr(self.problem, "config"):
-            logger.warning(
-                "Problem does not have a config attribute. "
-                "Checkpointing requires a config for complete state restoration. "
-                "Disabling checkpointing."
-            )
-            self.checkpoint_frequency = 0
             return
 
         # Setup checkpoint directory
@@ -120,7 +128,7 @@ class CheckpointMixin(ABC):
         self.checkpoint_manager = self._create_checkpoint_manager(
             self.checkpoint_dir, max_checkpoints, enable_async_checkpointing
         )
-        OmegaConf.save(self._get_solver_config(), self.checkpoint_dir / "config.yaml")
+        OmegaConf.save(self.config, self.checkpoint_dir / "config.yaml")
         logger.info(
             f"Saving checkpoints every {self.checkpoint_frequency} "
             f"iteration(s) to {self.checkpoint_dir}"
@@ -269,16 +277,6 @@ class CheckpointMixin(ABC):
         solver._restore_state_from_checkpoint(cp_state)
 
         return solver
-
-    @abstractmethod
-    def _get_solver_config(self) -> Dict[str, Any]:
-        """Get solver configuration for reconstruction.
-
-        Returns:
-            Dictionary containing solver configuration that can be used with
-            Hydra's instantiate to recreate the solver.
-        """
-        pass
 
     @abstractmethod
     def _restore_state_from_checkpoint(self, state: Dict[str, Any]) -> None:

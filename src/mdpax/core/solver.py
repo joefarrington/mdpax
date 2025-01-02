@@ -34,23 +34,9 @@ class SolverConfig:
 
     _target_: str = MISSING
     problem: ProblemConfig = MISSING
-
-    # Solver parameters
-    gamma: float = 0.99
-    epsilon: float = 1e-3
-    max_batch_size: int = 1024
-    jax_double_precision: bool = True
-    verbose: int = 2  # Default to INFO level
-
-
-@dataclass
-class SolverWithCheckpointConfig(SolverConfig):
-    """Configuration for solvers with checkpointing."""
-
-    checkpoint_dir: str | None = None
-    checkpoint_frequency: int = 0
-    max_checkpoints: int = 1
-    enable_async_checkpointing: bool = True
+    max_batch_size: int = MISSING
+    jax_double_precision: bool = MISSING
+    verbose: int = MISSING
 
 
 @chex.dataclass(frozen=True)

@@ -28,6 +28,7 @@ def test_checkpoint_save_load(tmp_path):
         epsilon=1e-4,
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=5,
+        verbose=0,
     )
 
     # Run for a few iterations
@@ -58,6 +59,7 @@ def test_checkpoint_resume_to_convergence(tmp_path):
         gamma=0.99,
         epsilon=1e-4,
         checkpoint_frequency=0,
+        verbose=0,
     )
     solver1.solve(max_iterations=2000)
     final_values = solver1.values.copy()
@@ -71,6 +73,7 @@ def test_checkpoint_resume_to_convergence(tmp_path):
         epsilon=1e-4,
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=100,
+        verbose=0,
     )
 
     # Run for a few iterations
@@ -98,6 +101,7 @@ def test_max_checkpoints_retained(tmp_path):
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=checkpoint_frequency,
         max_checkpoints=max_checkpoints,
+        verbose=0,
     )
     # Run solver
     solver.solve()
@@ -127,6 +131,7 @@ def test_custom_checkpoint_config_on_restore(tmp_path):
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=100,
         max_checkpoints=1,
+        verbose=0,
     )
     solver.solve(max_iterations=500)
 

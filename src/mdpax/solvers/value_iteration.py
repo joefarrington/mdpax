@@ -1,18 +1,17 @@
 """Value iteration solver for MDPs."""
 
-from pathlib import Path
-
 import jax
 import jax.numpy as jnp
 from hydra.conf import dataclass
+from hydra.utils import instantiate
 from jaxtyping import Array, Float
 from loguru import logger
 
-from mdpax.core.problem import Problem
+from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.core.solver import (
     Solver,
+    SolverConfig,
     SolverState,
-    SolverWithCheckpointConfig,
 )
 from mdpax.utils.checkpointing import CheckpointMixin
 from mdpax.utils.logging import get_convergence_format
@@ -27,17 +26,67 @@ from mdpax.utils.types import (
 
 
 @dataclass
-class ValueIterationConfig(SolverWithCheckpointConfig):
+class ValueIterationConfig(SolverConfig):
     """Configuration for the Value Iteration solver.
 
     This solver performs synchronous updates over all states using
     parallel processing across devices.
 
-    Attributes:
-        _target_: Full path to solver class for Hydra instantiation
+    Args:
+        problem: Optional problem configuration. If not provided, can pass a Problem
+            instance directly to the solver. If a Problem instance with a config is
+            provided to the solver, its config will be extracted and stored here.
+        gamma: Discount factor in [0,1]
+        epsilon: Convergence threshold for value changes
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        verbose: Logging verbosity level (0-4)
+        checkpoint_dir: Directory to store checkpoints
+        checkpoint_frequency: How often to save checkpoints (0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep
+        enable_async_checkpointing: Whether to save checkpoints asynchronously
+
+    Example:
+        >>> # Using a Problem instance with config
+        >>> problem = Forest(S=4)  # Has config
+        >>> solver = ValueIteration(problem=problem)  # Config extracted automatically
+
+        >>> # Or using a ProblemConfig directly
+        >>> problem_config = ForestConfig(S=4)
+        >>> config = ValueIterationConfig(problem=problem_config)
+        >>> solver = ValueIteration(config=config)
+
+        >>> # Or using a Problem instance without config
+        >>> problem = CustomProblem()  # No config
+        >>> solver = ValueIteration(problem=problem)  # Checkpointing will be disabled
     """
 
     _target_: str = "mdpax.solvers.value_iteration.ValueIteration"
+    problem: ProblemConfig | None = None
+    gamma: float = 0.99
+    epsilon: float = 1e-3
+    max_batch_size: int = 1024
+    jax_double_precision: bool = True
+    verbose: int = 2
+    checkpoint_dir: str | None = None
+    checkpoint_frequency: int = 0
+    max_checkpoints: int = 1
+    enable_async_checkpointing: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.problem is not None and not isinstance(ProblemConfig):
+            raise TypeError("problem must be a ProblemConfig if provided")
+        if not 0 <= self.gamma <= 1:
+            raise ValueError("gamma must be between 0 and 1")
+        if self.epsilon <= 0:
+            raise ValueError("epsilon must be positive")
+        if self.max_batch_size <= 0:
+            raise ValueError("max_batch_size must be positive")
+        if self.checkpoint_frequency < 0:
+            raise ValueError("checkpoint_frequency must be non-negative")
+        if self.max_checkpoints < 0:
+            raise ValueError("max_checkpoints must be non-negative")
 
 
 class ValueIteration(Solver, CheckpointMixin):
@@ -55,46 +104,51 @@ class ValueIteration(Solver, CheckpointMixin):
         absolute difference.
 
     Args:
-        problem: MDP problem to solve
-        gamma: Discount factor in [0,1]
-        epsilon: Convergence threshold for value changes
-        max_batch_size: Maximum states to process in parallel on each device
-        jax_double_precision: Whether to use float64 precision
-        verbose: Logging verbosity level (0-4)
-        checkpoint_dir: Directory to store checkpoints
-        checkpoint_frequency: How often to save checkpoints (0 to disable)
-        max_checkpoints: Maximum number of checkpoints to keep
-        enable_async_checkpointing: Whether to save checkpoints asynchronously
-
+        problem: Problem instance or None if using config
+        config: Configuration object. If provided, other kwargs are ignored.
+        **kwargs: Parameters matching :class:`ValueIterationConfig`.
+            See Config class for detailed parameter descriptions.
     """
+
+    Config = ValueIterationConfig
 
     def __init__(
         self,
-        problem: Problem,
-        gamma: float = 0.99,
-        epsilon: float = 1e-3,
-        max_batch_size: int = 1024,
-        jax_double_precision: bool = True,
-        verbose: int = 2,
-        checkpoint_dir: str | Path | None = None,
-        checkpoint_frequency: int = 0,
-        max_checkpoints: int = 1,
-        enable_async_checkpointing: bool = True,
+        problem: Problem | None = None,
+        config: ValueIterationConfig | None = None,
+        **kwargs,
     ):
         """Initialize the solver."""
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self.Config(**kwargs)
+
+        # Handle problem instance vs config
+        if problem is not None:
+            # If given a Problem instance directly, store
+            # config, if it has one
+            if hasattr(problem, "config"):
+                self.config.problem = problem.config
+        else:
+            # If no problem instance, must have config
+            if self.config.problem is None:
+                raise ValueError("Must provide either problem instance or config")
+            problem = instantiate(self.config.problem)
+
         super().__init__(
             problem,
-            gamma,
-            epsilon,
-            max_batch_size,
-            jax_double_precision,
-            verbose,
+            self.config.gamma,
+            self.config.epsilon,
+            self.config.max_batch_size,
+            self.config.jax_double_precision,
+            self.config.verbose,
         )
         self.setup_checkpointing(
-            checkpoint_dir,
-            checkpoint_frequency,
-            max_checkpoints=max_checkpoints,
-            enable_async_checkpointing=enable_async_checkpointing,
+            self.config.checkpoint_dir,
+            self.config.checkpoint_frequency,
+            max_checkpoints=self.config.max_checkpoints,
+            enable_async_checkpointing=self.config.enable_async_checkpointing,
         )
         self.policy = None
 
@@ -436,6 +490,12 @@ class ValueIteration(Solver, CheckpointMixin):
         logger.success("Value iteration completed")
         return self.solver_state
 
+    def _restore_state_from_checkpoint(self, solver_state: SolverState) -> None:
+        """Restore solver state from checkpoint."""
+        self.values = solver_state.values
+        self.policy = solver_state.policy
+        self.iteration = solver_state.info.iteration
+
     def _get_solver_config(self) -> ValueIterationConfig:
         """Get solver configuration for reconstruction.
 
@@ -443,20 +503,4 @@ class ValueIteration(Solver, CheckpointMixin):
             Configuration containing all parameters needed to reconstruct
             this solver instance
         """
-        return ValueIterationConfig(
-            problem=self.problem.config,
-            gamma=float(self.gamma),
-            epsilon=self.epsilon,
-            max_batch_size=self.max_batch_size,
-            jax_double_precision=self.jax_double_precision,
-            checkpoint_dir=str(self.checkpoint_dir) if self.checkpoint_dir else None,
-            checkpoint_frequency=self.checkpoint_frequency,
-            max_checkpoints=self.max_checkpoints,
-            enable_async_checkpointing=self.enable_async_checkpointing,
-        )
-
-    def _restore_state_from_checkpoint(self, solver_state: SolverState) -> None:
-        """Restore solver state from checkpoint."""
-        self.values = solver_state.values
-        self.policy = solver_state.policy
-        self.iteration = solver_state.info.iteration
+        return self.config

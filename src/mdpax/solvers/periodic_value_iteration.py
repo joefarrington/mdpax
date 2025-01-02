@@ -1,7 +1,5 @@
 """Value iteration solver with periodic convergence checking."""
 
-from pathlib import Path
-
 import chex
 import jax.numpy as jnp
 import numpy as np
@@ -9,31 +7,84 @@ from hydra.conf import MISSING, dataclass
 from jaxtyping import Array, Float
 from loguru import logger
 
-from mdpax.core.problem import Problem
-from mdpax.core.solver import SolverInfo, SolverState
-from mdpax.solvers.value_iteration import ValueIteration, ValueIterationConfig
-from mdpax.utils.logging import get_convergence_format
+from mdpax.core.problem import Problem, ProblemConfig
+from mdpax.core.solver import SolverConfig, SolverInfo, SolverState
+from mdpax.solvers.value_iteration import ValueIteration
 from mdpax.utils.types import (
     ValueFunction,
 )
 
 
 @dataclass
-class PeriodicValueIterationConfig(ValueIterationConfig):
+class PeriodicValueIterationConfig(SolverConfig):
     """Configuration for the Periodic Value Iteration solver.
 
     This solver extends value iteration to check for convergence over a
     specified period length rather than between consecutive iterations.
 
-    Attributes:
-        _target_: Full path to solver class for Hydra instantiation
+    Args:
+        problem: Optional problem configuration. If not provided, can pass a Problem
+            instance directly to the solver. If a Problem instance with a config is
+            provided to the solver, its config will be extracted and stored here.
         period: Number of iterations to check for periodic convergence
+        gamma: Discount factor in [0,1]
+        epsilon: Convergence threshold for value changes
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        verbose: Logging verbosity level (0-4)
+        checkpoint_dir: Directory to store checkpoints
+        checkpoint_frequency: How often to save checkpoints (0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep
+        enable_async_checkpointing: Whether to save checkpoints asynchronously
         clear_value_history_on_convergence: Whether to clear history after convergence
+
+    Example:
+        >>> # Using a Problem instance with config
+        >>> problem = Forest(S=4)  # Has config
+        >>> solver = PeriodicValueIteration(problem=problem, period=2)  # Config extracted automatically
+
+        >>> # Or using a ProblemConfig directly
+        >>> problem_config = ForestConfig(S=4)
+        >>> config = PeriodicValueIterationConfig(problem=problem_config, period=2)
+        >>> solver = PeriodicValueIteration(config=config)
+
+        >>> # Or using a Problem instance without config
+        >>> problem = CustomProblem()  # No config
+        >>> solver = PeriodicValueIteration(problem=problem, period=2)  # Checkpointing will be disabled
     """
 
     _target_: str = "mdpax.solvers.periodic_value_iteration.PeriodicValueIteration"
+    problem: ProblemConfig | None = None
     period: int = MISSING
+    gamma: float = 0.99
+    epsilon: float = 1e-3
+    max_batch_size: int = 1024
+    jax_double_precision: bool = True
+    verbose: int = 2
+    checkpoint_dir: str | None = None
+    checkpoint_frequency: int = 0
+    max_checkpoints: int = 1
+    enable_async_checkpointing: bool = True
     clear_value_history_on_convergence: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.problem is not None and not isinstance(ProblemConfig):
+            raise TypeError("problem must be a ProblemConfig if provided")
+        if self.period <= 0:
+            raise ValueError("Period must be positive")
+        if self.gamma == 1.0 and self.period < 2:
+            raise ValueError("Period must be at least 2 for undiscounted case")
+        if not 0 <= self.gamma <= 1:
+            raise ValueError("gamma must be between 0 and 1")
+        if self.epsilon <= 0:
+            raise ValueError("epsilon must be positive")
+        if self.max_batch_size <= 0:
+            raise ValueError("max_batch_size must be positive")
+        if self.checkpoint_frequency < 0:
+            raise ValueError("checkpoint_frequency must be non-negative")
+        if self.max_checkpoints < 0:
+            raise ValueError("max_checkpoints must be non-negative")
 
 
 @chex.dataclass(frozen=True)
@@ -79,80 +130,30 @@ class PeriodicValueIteration(ValueIteration):
         Supports checkpointing for long-running problems.
 
     Args:
-        problem: MDP problem to solve
-        period: Number of iterations to check for periodic convergence
-        gamma: Discount factor in [0,1]
-        epsilon: Convergence threshold for value changes
-        max_batch_size: Maximum states to process in parallel on each device
-        jax_double_precision: Whether to use float64 precision
-        verbose: Logging verbosity level (0-4)
-        checkpoint_dir: Directory to store checkpoints
-        checkpoint_frequency: How often to save checkpoints (0 to disable)
-        max_checkpoints: Maximum number of checkpoints to keep
-        enable_async_checkpointing: Whether to save checkpoints asynchronously
-        clear_value_history_on_convergence: Whether to clear value history
-            after the algorithm converges
+        problem: Problem instance or None if using config
+        config: Configuration object. If provided, other kwargs are ignored.
+        **kwargs: Parameters matching :class:`PeriodicValueIterationConfig`.
+            See Config class for detailed parameter descriptions.
     """
+
+    Config = PeriodicValueIterationConfig
 
     def __init__(
         self,
-        problem: Problem,
-        period: int,
-        gamma: float = 0.99,
-        epsilon: float = 1e-3,
-        max_batch_size: int = 1024,
-        jax_double_precision: bool = True,
-        verbose: int = 2,
-        checkpoint_dir: str | Path | None = None,
-        checkpoint_frequency: int = 0,
-        max_checkpoints: int = 1,
-        enable_async_checkpointing: bool = True,
-        clear_value_history_on_convergence: bool = True,
+        problem: Problem | None = None,
+        config: PeriodicValueIterationConfig | None = None,
+        **kwargs,
     ):
-        """Initialize solver.
+        """Initialize solver."""
+        super().__init__(problem=problem, config=config, **kwargs)
 
-        Args:
-            problem: MDP problem to solve
-            period: Expected period length for value function oscillation
-            gamma: Discount factor (use 1.0 for average reward case)
-            max_iter: Maximum number of iterations
-            epsilon: Convergence threshold
-            max_batch_size: Size of state batches for parallel processing
-            verbose: Verbosity level
-            checkpoint_dir: Directory for checkpoints (optional)
-            checkpoint_frequency: How often to save checkpoints (iterations)
-            max_checkpoints: Maximum checkpoints to keep
-            enable_async_checkpointing: Whether to checkpoint asynchronously
-            clear_value_history_on_convergence: Whether to clear value history
-                after convergence
-        """
-        # Validate inputs
-        if period <= 0:
-            raise ValueError("Period must be positive")
-        if gamma == 1.0 and period < 2:
-            raise ValueError("Period must be at least 2 for undiscounted case")
-
-        self.period = period
-        self.clear_value_history_on_convergence = clear_value_history_on_convergence
-
-        super().__init__(
-            problem,
-            gamma=gamma,
-            epsilon=epsilon,
-            max_batch_size=max_batch_size,
-            jax_double_precision=jax_double_precision,
-            verbose=verbose,
-            checkpoint_dir=checkpoint_dir,
-            checkpoint_frequency=checkpoint_frequency,
-            max_checkpoints=max_checkpoints,
-            enable_async_checkpointing=enable_async_checkpointing,
+        self.period = self.config.period
+        self.clear_value_history_on_convergence = (
+            self.config.clear_value_history_on_convergence
         )
 
-        # Get convergence format for logging convergence metrics
-        self.convergence_format = get_convergence_format(epsilon)
-
         # Initialize value history in CPU memory
-        self.value_history = np.zeros((period + 1, problem.n_states))
+        self.value_history = np.zeros((self.period + 1, self.problem.n_states))
         self.history_index: int = 0
         self.value_history[0] = np.array(self.values)
 
@@ -317,19 +318,7 @@ class PeriodicValueIteration(ValueIteration):
             Configuration containing all parameters needed to reconstruct
             this solver instance
         """
-        return PeriodicValueIterationConfig(
-            problem=self.problem.config,
-            period=self.period,
-            gamma=float(self.gamma),
-            epsilon=self.epsilon,
-            max_batch_size=self.max_batch_size,
-            jax_double_precision=self.jax_double_precision,
-            checkpoint_dir=str(self.checkpoint_dir) if self.checkpoint_dir else None,
-            checkpoint_frequency=self.checkpoint_frequency,
-            max_checkpoints=self.max_checkpoints,
-            enable_async_checkpointing=self.enable_async_checkpointing,
-            clear_value_history_on_convergence=self.clear_value_history_on_convergence,
-        )
+        return self.config
 
     @property
     def solver_state(self) -> PeriodicValueIterationState:

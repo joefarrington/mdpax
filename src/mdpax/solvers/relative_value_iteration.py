@@ -1,43 +1,76 @@
 """Relative value iteration solver for average reward MDPs."""
 
-from pathlib import Path
-
 import chex
 import jax.numpy as jnp
-from hydra.conf import MISSING, dataclass
+from hydra.conf import dataclass
 from loguru import logger
 
 from mdpax.core.problem import Problem, ProblemConfig
-from mdpax.core.solver import SolverInfo, SolverState
+from mdpax.core.solver import SolverConfig, SolverInfo, SolverState
 from mdpax.solvers.value_iteration import ValueIteration
 from mdpax.utils.logging import get_convergence_format
 from mdpax.utils.types import ValueFunction
 
 
 @dataclass
-class RelativeValueIterationConfig:
+class RelativeValueIterationConfig(SolverConfig):
     """Configuration for the Relative Value Iteration solver.
 
-    TODO: Need to define fresh because no gamma - need to think
-    about best way to deal with this.
+    Args:
+        problem: Optional problem configuration. If not provided, can pass a Problem
+            instance directly to the solver. If a Problem instance with a config is
+            provided to the solver, its config will be extracted and stored here.
+        epsilon: Convergence threshold for value changes
+        gamma: Discount factor (fixed at 1.0 for relative value iteration)
+        max_batch_size: Maximum states to process in parallel on each device
+        jax_double_precision: Whether to use float64 precision
+        verbose: Logging verbosity level (0-4)
+        checkpoint_dir: Directory to store checkpoints
+        checkpoint_frequency: How often to save checkpoints (0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep
+        enable_async_checkpointing: Whether to save checkpoints asynchronously
 
-    Attributes:
-        _target_: Full path to solver class for Hydra instantiation
-        gamma: Must be 1.0 for average reward problems
+    Example:
+        >>> # Using a Problem instance with config
+        >>> problem = Forest(S=4)  # Has config
+        >>> solver = RelativeValueIteration(problem=problem)  # Config extracted automatically
+
+        >>> # Or using a ProblemConfig directly
+        >>> problem_config = ForestConfig(S=4)
+        >>> config = RelativeValueIterationConfig(problem=problem_config)
+        >>> solver = RelativeValueIteration(config=config)
+
+        >>> # Or using a Problem instance without config
+        >>> problem = CustomProblem()  # No config
+        >>> solver = RelativeValueIteration(problem=problem)  # Checkpointing will be disabled
     """
 
     _target_: str = "mdpax.solvers.relative_value_iteration.RelativeValueIteration"
-    problem: ProblemConfig = MISSING
-
-    # Solver parameters
+    problem: ProblemConfig | None = None
+    gamma: float = 1.0
     epsilon: float = 1e-3
     max_batch_size: int = 1024
     jax_double_precision: bool = True
-    verbose: int = 2  # Default to INFO level
+    verbose: int = 2
     checkpoint_dir: str | None = None
     checkpoint_frequency: int = 0
     max_checkpoints: int = 1
     enable_async_checkpointing: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.problem is not None and not isinstance(ProblemConfig):
+            raise TypeError("problem must be a ProblemConfig if provided")
+        if not self.gamma == 1.0:
+            raise ValueError("gamma must be 1.0 for relative value iteration")
+        if self.epsilon <= 0:
+            raise ValueError("epsilon must be positive")
+        if self.max_batch_size <= 0:
+            raise ValueError("max_batch_size must be positive")
+        if self.checkpoint_frequency < 0:
+            raise ValueError("checkpoint_frequency must be non-negative")
+        if self.max_checkpoints < 0:
+            raise ValueError("max_checkpoints must be non-negative")
 
 
 @chex.dataclass(frozen=True)
@@ -75,50 +108,26 @@ class RelativeValueIteration(ValueIteration):
     Note:
         Supports checkpointing for long-running problems.
 
-
-     Args:
-        problem: MDP problem to solve
-        epsilon: Convergence threshold for value changes
-        max_batch_size: Maximum states to process in parallel on each device
-        jax_double_precision: Whether to use float64 precision
-        checkpoint_dir: Directory to store checkpoints
-        checkpoint_frequency: How often to save checkpoints (0 to disable)
-        max_checkpoints: Maximum number of checkpoints to keep
-        enable_async_checkpointing: Whether to save checkpoints asynchronously
-        verbose: Logging verbosity level (0-4)
+    Args:
+        problem: Problem instance or None if using config
+        config: Configuration object. If provided, other kwargs are ignored.
+        **kwargs: Parameters matching :class:`RelativeValueIterationConfig`.
+            See Config class for detailed parameter descriptions.
     """
+
+    Config = RelativeValueIterationConfig
 
     def __init__(
         self,
-        problem: Problem,
-        epsilon: float = 1e-3,
-        max_batch_size: int = 1024,
-        jax_double_precision: bool = True,
-        verbose: int = 2,
-        checkpoint_dir: str | Path | None = None,
-        checkpoint_frequency: int = 0,
-        max_checkpoints: int = 1,
-        enable_async_checkpointing: bool = True,
+        problem: Problem | None = None,
+        config: RelativeValueIterationConfig | None = None,
+        **kwargs,
     ):
-        """Initialize solver.
+        """Initialize solver."""
 
-        Args same as ValueIteration except gamma (fixed at 1.0 for average reward).
-        """
-        # Initialize with gamma=1 since this is average reward case
-        super().__init__(
-            problem,
-            gamma=1.0,  # Fixed for average reward case
-            epsilon=epsilon,
-            max_batch_size=max_batch_size,
-            jax_double_precision=jax_double_precision,
-            verbose=verbose,
-            checkpoint_dir=checkpoint_dir,
-            checkpoint_frequency=checkpoint_frequency,
-            max_checkpoints=max_checkpoints,
-            enable_async_checkpointing=enable_async_checkpointing,
-        )
+        super().__init__(problem=problem, config=config, **kwargs)
         # Get convergence format for logging convergence metrics
-        self.convergence_format = get_convergence_format(epsilon)
+        self.convergence_format = get_convergence_format(self.config.epsilon)
         self.gain = 0.0  # Initialize gain term for average reward
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
@@ -206,16 +215,7 @@ class RelativeValueIteration(ValueIteration):
             Configuration containing all parameters needed to reconstruct
             this solver instance
         """
-        return RelativeValueIterationConfig(
-            problem=self.problem.config,
-            epsilon=self.epsilon,
-            max_batch_size=self.max_batch_size,
-            jax_double_precision=self.jax_double_precision,
-            checkpoint_dir=str(self.checkpoint_dir) if self.checkpoint_dir else None,
-            checkpoint_frequency=self.checkpoint_frequency,
-            max_checkpoints=self.max_checkpoints,
-            enable_async_checkpointing=self.enable_async_checkpointing,
-        )
+        return self.config
 
     @property
     def solver_state(self) -> RelativeValueIterationState:
