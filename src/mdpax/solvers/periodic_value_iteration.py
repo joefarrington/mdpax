@@ -318,7 +318,7 @@ class PeriodicValueIteration(ValueIteration):
             this solver instance
         """
         return PeriodicValueIterationConfig(
-            problem=self.problem.get_problem_config(),
+            problem=self.problem.config,
             period=self.period,
             gamma=float(self.gamma),
             epsilon=self.epsilon,

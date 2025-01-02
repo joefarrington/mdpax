@@ -25,7 +25,32 @@ from mdpax.utils.types import (
 
 @dataclass
 class DeMoorSingleProductPerishableConfig(ProblemConfig):
-    """Configuration for the De Moor Perishable problem."""
+    """Configuration for the DeMoorSingleProductPerishable problem.
+
+    Args:
+        max_demand: Maximum possible demand per period. Must be positive.
+        demand_gamma_mean: Mean of gamma distribution for demand. Must be positive.
+        demand_gamma_cov: Coefficient of variation of demand distribution. Must be positive.
+        max_useful_life: Number of periods before stock expires. Must be >= 1.
+        lead_time: Number of periods between order and delivery. Must be >= 1.
+        max_order_quantity: Maximum units that can be ordered. Must be positive.
+        variable_order_cost: Cost per unit ordered
+        shortage_cost: Cost per unit of unmet demand
+        wastage_cost: Cost per unit that expires
+        holding_cost: Cost per unit held in stock at end of period
+        issue_policy: Stock issuing policy, either 'fifo' or 'lifo'
+
+    Example:
+        >>> config = DeMoorSingleProductPerishableConfig(
+        ...     max_demand=50,
+        ...     demand_gamma_mean=4.0,
+        ...     max_useful_life=3,
+        ... )
+        >>> problem = DeMoorSingleProductPerishable(config=config)
+
+        # Or using kwargs:
+        >>> problem = DeMoorSingleProductPerishable(max_demand=50)
+    """
 
     _target_: str = (
         "mdpax.problems.perishable_inventory.de_moor_single_product.DeMoorSingleProductPerishable"
@@ -41,6 +66,23 @@ class DeMoorSingleProductPerishableConfig(ProblemConfig):
     wastage_cost: float = 7.0
     holding_cost: float = 1.0
     issue_policy: str = "lifo"
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.max_demand <= 0:
+            raise ValueError("max_demand must be positive")
+        if self.demand_gamma_mean <= 0:
+            raise ValueError("demand_gamma_mean must be positive")
+        if self.demand_gamma_cov <= 0:
+            raise ValueError("demand_gamma_cov must be positive")
+        if self.max_useful_life < 1:
+            raise ValueError("max_useful_life must be greater than or equal to 1")
+        if self.lead_time < 1:
+            raise ValueError("lead_time must be greater than or equal to 1")
+        if self.max_order_quantity <= 0:
+            raise ValueError("max_order_quantity must be positive")
+        if self.issue_policy not in ["fifo", "lifo"]:
+            raise ValueError("issue_policy must be 'fifo' or 'lifo'")
 
 
 class DeMoorSingleProductPerishable(Problem):
@@ -80,61 +122,40 @@ class DeMoorSingleProductPerishable(Problem):
             before the next period
 
     Args:
-        max_demand: Maximum possible demand per period
-        demand_gamma_mean: Mean of gamma distribution for demand
-        demand_gamma_cov: Coefficient of variation of demand distribution
-        max_useful_life: Number of periods before stock expires
-        lead_time: Number of periods between order and delivery
-        max_order_quantity: Maximum units that can be ordered
-        variable_order_cost: Cost per unit ordered
-        shortage_cost: Cost per unit of unmet demand
-        wastage_cost: Cost per unit that expires
-        holding_cost: Cost per unit held in stock at the end of each period
-        issue_policy: Stock issuing policy ('fifo' or 'lifo')
+        config: Configuration object. If provided, keyword arguments are ignored.
+        **kwargs: Parameters matching :class:`DeMoorSingleProductPerishableConfig`.
+            See Config class for detailed parameter descriptions.
     """
 
+    Config = DeMoorSingleProductPerishableConfig
+
     def __init__(
-        self,
-        max_demand: int = 100,
-        demand_gamma_mean: float = 4.0,
-        demand_gamma_cov: float = 0.5,
-        max_useful_life: int = 2,
-        lead_time: int = 1,
-        max_order_quantity: int = 10,
-        variable_order_cost: float = 3.0,
-        shortage_cost: float = 5.0,
-        wastage_cost: float = 7.0,
-        holding_cost: float = 1.0,
-        issue_policy: str = "lifo",
+        self, config: DeMoorSingleProductPerishableConfig | None = None, **kwargs
     ):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self.Config(**kwargs)
 
-        assert (
-            max_useful_life >= 1
-        ), "max_useful_life must be greater than or equal to 1"
-        assert lead_time >= 1, "lead_time must be greater than or equal to 1"
-        assert issue_policy in ["fifo", "lifo"], "Issue policy must be 'fifo' or 'lifo'"
-
-        self.max_demand = max_demand
-        self.demand_gamma_mean = demand_gamma_mean
-        self.demand_gamma_cov = demand_gamma_cov
-        self.max_useful_life = max_useful_life
-        self.lead_time = lead_time
-        self.max_order_quantity = max_order_quantity
+        self.max_demand = self.config.max_demand
+        self.demand_gamma_mean = self.config.demand_gamma_mean
+        self.demand_gamma_cov = self.config.demand_gamma_cov
+        self.max_useful_life = self.config.max_useful_life
+        self.lead_time = self.config.lead_time
+        self.max_order_quantity = self.config.max_order_quantity
         self.cost_components = jnp.array(
             [
-                variable_order_cost,
-                shortage_cost,
-                wastage_cost,
-                holding_cost,
+                self.config.variable_order_cost,
+                self.config.shortage_cost,
+                self.config.wastage_cost,
+                self.config.holding_cost,
             ]
         )
-        self.issue_policy = issue_policy
+        self.issue_policy = self.config.issue_policy
         if self.issue_policy == "fifo":
             self._issue_stock = self._issue_fifo
-        elif self.issue_policy == "lifo":
-            self._issue_stock = self._issue_lifo
         else:
-            raise ValueError(f"Invalid issuing policy: {self.issue_policy}")
+            self._issue_stock = self._issue_lifo
 
         super().__init__()
 
@@ -305,27 +326,6 @@ class DeMoorSingleProductPerishable(Problem):
         next_state = jnp.hstack([closing_in_transit, closing_stock]).astype(jnp.int32)
 
         return next_state, reward
-
-    def get_problem_config(self) -> DeMoorSingleProductPerishableConfig:
-        """Get problem configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this problem instance
-        """
-        return DeMoorSingleProductPerishableConfig(
-            max_demand=int(self.max_demand),
-            demand_gamma_mean=float(self.demand_gamma_mean),
-            demand_gamma_cov=float(self.demand_gamma_cov),
-            max_useful_life=int(self.max_useful_life),
-            lead_time=int(self.lead_time),
-            max_order_quantity=int(self.max_order_quantity),
-            variable_order_cost=float(self.cost_components[0]),
-            shortage_cost=float(self.cost_components[1]),
-            wastage_cost=float(self.cost_components[2]),
-            holding_cost=float(self.cost_components[3]),
-            issue_policy=self.issue_policy,
-        )
 
     # Transition function helper methods
     # ----------------------------------

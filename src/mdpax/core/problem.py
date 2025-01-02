@@ -227,20 +227,6 @@ class Problem(ABC):
         """
         return 0.0
 
-    # Support methods
-    @abstractmethod
-    def get_problem_config(self) -> ProblemConfig:
-        """Get problem configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this problem instance
-
-        Note:
-            This is used during checkpoint restoration to recreate the problem
-        """
-        pass
-
     def build_transition_and_reward_matrices(
         self, jax_double_precision: bool = True, normalization_tolerance: float = 1e-4
     ) -> tuple[

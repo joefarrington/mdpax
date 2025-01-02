@@ -444,7 +444,7 @@ class ValueIteration(Solver, CheckpointMixin):
             this solver instance
         """
         return ValueIterationConfig(
-            problem=self.problem.get_problem_config(),
+            problem=self.problem.config,
             gamma=float(self.gamma),
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,

@@ -21,6 +21,12 @@ class CheckpointMixin(ABC):
     Checkpoints include both the solver state and configuration, allowing for complete
     reconstruction of the solver.
 
+    Note:
+        Saving and restoring checkpoints relies on the problem have a config attribute and
+        checkpointing will not be enabled if the problem does not have a config attribute.
+        All of the example Problems have configs but this is not a requirement because, it
+        requires the Problem to be defined in a module that is importable by Hydra.
+
     Attributes:
         checkpoint_dir (Path): Directory where checkpoints are stored.
         checkpoint_frequency (int): Number of iterations between checkpoints, 0 to disable.
@@ -79,6 +85,28 @@ class CheckpointMixin(ABC):
         if max_checkpoints < 0:
             raise ValueError("max_checkpoints must be non-negative")
 
+        # Store basic settings
+        self.checkpoint_frequency = checkpoint_frequency
+        self.max_checkpoints = max_checkpoints
+        self.enable_async_checkpointing = enable_async_checkpointing
+        self.checkpoint_manager = None
+
+        # Early return if checkpointing not requested
+        if checkpoint_frequency == 0:
+            logger.info("Checkpointing not enabled")
+            return
+
+        # Check if problem has config attribute
+        if not hasattr(self.problem, "config"):
+            logger.warning(
+                "Problem does not have a config attribute. "
+                "Checkpointing requires a config for complete state restoration. "
+                "Disabling checkpointing."
+            )
+            self.checkpoint_frequency = 0
+            return
+
+        # Setup checkpoint directory
         if checkpoint_dir is None:
             from datetime import datetime
 
@@ -86,26 +114,17 @@ class CheckpointMixin(ABC):
             checkpoint_dir = Path(
                 f"checkpoints/{self.problem.name}/{current_datetime}/"
             )
-
         self.checkpoint_dir = Path(checkpoint_dir).absolute()
-        self.checkpoint_frequency = checkpoint_frequency
-        self.max_checkpoints = max_checkpoints
-        self.enable_async_checkpointing = enable_async_checkpointing
 
-        if checkpoint_frequency > 0:
-            self.checkpoint_manager = self._create_checkpoint_manager(
-                self.checkpoint_dir, max_checkpoints, enable_async_checkpointing
-            )
-            OmegaConf.save(
-                self._get_solver_config(), self.checkpoint_dir / "config.yaml"
-            )
-            logger.info(
-                f"Saving checkpoints every {self.checkpoint_frequency} "
-                f"iteration(s) to {self.checkpoint_dir}"
-            )
-        else:
-            self.checkpoint_manager = None
-            logger.info("Checkpointing not enabled")
+        # Create checkpoint manager and save config
+        self.checkpoint_manager = self._create_checkpoint_manager(
+            self.checkpoint_dir, max_checkpoints, enable_async_checkpointing
+        )
+        OmegaConf.save(self._get_solver_config(), self.checkpoint_dir / "config.yaml")
+        logger.info(
+            f"Saving checkpoints every {self.checkpoint_frequency} "
+            f"iteration(s) to {self.checkpoint_dir}"
+        )
 
     @property
     def is_checkpointing_enabled(self) -> bool:

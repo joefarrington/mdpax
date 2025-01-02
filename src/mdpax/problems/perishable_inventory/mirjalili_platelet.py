@@ -28,13 +28,42 @@ from mdpax.utils.types import (
 
 @dataclass
 class MirjaliliPlateletPerishableConfig(ProblemConfig):
-    """Configuration for the Mirjalili Perishable Platelet problem."""
+    """Configuration for the MirjaliliPlateletPerishable problem.
+
+    Args:
+        max_demand: Maximum possible demand per period. Must be positive.
+        weekday_demand_negbin_n: Parameter n of negative binomial distribution for each weekday,
+            [M, T, W, T, F, S, S]. All values must be positive.
+        weekday_demand_negbin_delta: Parameter delta of negative binomial distribution for each weekday,
+            [M, T, W, T, F, S, S]. All values must be positive.
+        max_useful_life: Number of periods before stock expires. Must be >= 1.
+        useful_life_at_arrival_distribution_c_0: Base logit parameters for useful life at arrival,
+            [2, ..., max_useful_life]. Length must be max_useful_life - 1.
+        useful_life_at_arrival_distribution_c_1: Order quantity multiplier for useful life logits,
+            [2, ..., max_useful_life]. Length must be max_useful_life - 1.
+        max_order_quantity: Maximum units that can be ordered. Must be positive.
+        variable_order_cost: Cost per unit ordered
+        fixed_order_cost: Cost incurred when order > 0
+        shortage_cost: Cost per unit of unmet demand
+        wastage_cost: Cost per unit that expires
+        holding_cost: Cost per unit held in stock at end of period
+
+    Example:
+        >>> config = MirjaliliPlateletPerishableConfig(
+        ...     max_demand=30,
+        ...     max_useful_life=4,
+        ...     max_order_quantity=25,
+        ... )
+        >>> problem = MirjaliliPlateletPerishable(config=config)
+
+        # Or using kwargs:
+        >>> problem = MirjaliliPlateletPerishable(max_demand=30)
+    """
 
     _target_: str = (
         "mdpax.problems.perishable_inventory.mirjalili_platelet.MirjaliliPlateletPerishable"
     )
     max_demand: int = 20
-    # [M, T, W, T, F, S, S]
     weekday_demand_negbin_n: tuple[float, ...] = (3.5, 11.0, 7.2, 11.1, 5.9, 5.5, 2.2)
     weekday_demand_negbin_delta: tuple[float, ...] = (5.7, 6.9, 6.5, 6.2, 5.8, 3.3, 3.4)
     max_useful_life: int = 3
@@ -46,6 +75,37 @@ class MirjaliliPlateletPerishableConfig(ProblemConfig):
     shortage_cost: float = 20.0
     wastage_cost: float = 5.0
     holding_cost: float = 1.0
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.max_demand <= 0:
+            raise ValueError("max_demand must be positive")
+        if len(self.weekday_demand_negbin_n) != 7:
+            raise ValueError("weekday_demand_negbin_n must have length 7")
+        if any(n <= 0 for n in self.weekday_demand_negbin_n):
+            raise ValueError("all weekday_demand_negbin_n values must be positive")
+        if len(self.weekday_demand_negbin_delta) != 7:
+            raise ValueError("weekday_demand_negbin_delta must have length 7")
+        if any(d <= 0 for d in self.weekday_demand_negbin_delta):
+            raise ValueError("all weekday_demand_negbin_delta values must be positive")
+        if self.max_useful_life < 1:
+            raise ValueError("max_useful_life must be greater than or equal to 1")
+        if (
+            len(self.useful_life_at_arrival_distribution_c_0)
+            != self.max_useful_life - 1
+        ):
+            raise ValueError(
+                "useful_life_at_arrival_distribution_c_0 must have length max_useful_life - 1"
+            )
+        if (
+            len(self.useful_life_at_arrival_distribution_c_1)
+            != self.max_useful_life - 1
+        ):
+            raise ValueError(
+                "useful_life_at_arrival_distribution_c_1 must have length max_useful_life - 1"
+            )
+        if self.max_order_quantity <= 0:
+            raise ValueError("max_order_quantity must be positive")
 
 
 WEEKDAYS = [
@@ -103,90 +163,49 @@ class MirjaliliPlateletPerishable(Problem):
            - Holding costs (per unit in stock at end of period, including expiring units)
         7. Update weekday to next day of week
 
-    Args:
-        max_demand: Maximum possible demand per period
-        weekday_demand_negbin_n: Parameter n of negative binomial distribution for each weekday, [M, T, W, T, F, S, S]
-        weekday_demand_negbin_delta: Parameter delta of negative binomial distribution for each weekday, [M, T, W, T, F, S, S]
-        max_useful_life: Number of periods before stock expires
-        useful_life_at_arrival_distribution_c_0: Base logit parameters for useful life at arrival, [2, ..., max_useful_life]
-        useful_life_at_arrival_distribution_c_1: Order quantity multiplier for useful life logits, [2, ..., max_useful_life]
-        max_order_quantity: Maximum units that can be ordered
-        variable_order_cost: Cost per unit ordered
-        fixed_order_cost: Cost incurred when order > 0
-        shortage_cost: Cost per unit of unmet demand
-        wastage_cost: Cost per unit that expires
-        holding_cost: Cost per unit held in stock at the end of each period
-
     Note:
         - In the original paper, the demand distribution is a truncated negative
           binomial distribution over the number of failured before reaching a specified
           number of successed parameterized by n (target number of successes)
           and delta (expected value).
         - The probability of success of a trial is n/(n + delta).
+
+    Args:
+        config: Configuration object. If provided, keyword arguments are ignored.
+        **kwargs: Parameters matching :class:`MirjaliliPlateletPerishableConfig`.
+            See Config class for detailed parameter descriptions.
     """
 
+    Config = MirjaliliPlateletPerishableConfig
+
     def __init__(
-        self,
-        max_demand: int = 20,
-        weekday_demand_negbin_n: tuple[float, ...] = [
-            3.5,
-            11.0,
-            7.2,
-            11.1,
-            5.9,
-            5.5,
-            2.2,
-        ],
-        weekday_demand_negbin_delta: tuple[float, ...] = [
-            5.7,
-            6.9,
-            6.5,
-            6.2,
-            5.8,
-            3.3,
-            3.4,
-        ],
-        max_useful_life: int = 3,
-        useful_life_at_arrival_distribution_c_0: tuple[float, ...] = [1.0, 0.5],
-        useful_life_at_arrival_distribution_c_1: tuple[float, ...] = [0.0, 0.0],
-        max_order_quantity: int = 20,
-        variable_order_cost: float = 0.0,
-        fixed_order_cost: float = 10.0,
-        shortage_cost: float = 20.0,
-        wastage_cost: float = 5.0,
-        holding_cost: float = 1.0,
+        self, config: MirjaliliPlateletPerishableConfig | None = None, **kwargs
     ):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self.Config(**kwargs)
 
-        assert (
-            max_useful_life >= 1
-        ), "max_useful_life must be greater than or equal to 1"
-        self._useful_life_at_arrival_distribution_valid(
-            useful_life_at_arrival_distribution_c_0,
-            useful_life_at_arrival_distribution_c_1,
-            max_useful_life,
-        )
-
-        self.max_demand = max_demand
-
+        self.max_demand = self.config.max_demand
         self.useful_life_at_arrival_distribution_c_0 = jnp.array(
-            useful_life_at_arrival_distribution_c_0
+            self.config.useful_life_at_arrival_distribution_c_0
         )
         self.useful_life_at_arrival_distribution_c_1 = jnp.array(
-            useful_life_at_arrival_distribution_c_1
+            self.config.useful_life_at_arrival_distribution_c_1
         )
-
-        self.weekday_demand_negbin_n = jnp.array(weekday_demand_negbin_n)
-        self.weekday_demand_negbin_delta = jnp.array(weekday_demand_negbin_delta)
-
-        self.max_useful_life = max_useful_life
-        self.max_order_quantity = max_order_quantity
+        self.weekday_demand_negbin_n = jnp.array(self.config.weekday_demand_negbin_n)
+        self.weekday_demand_negbin_delta = jnp.array(
+            self.config.weekday_demand_negbin_delta
+        )
+        self.max_useful_life = self.config.max_useful_life
+        self.max_order_quantity = self.config.max_order_quantity
         self.cost_components = jnp.array(
             [
-                variable_order_cost,
-                fixed_order_cost,
-                shortage_cost,
-                wastage_cost,
-                holding_cost,
+                self.config.variable_order_cost,
+                self.config.fixed_order_cost,
+                self.config.shortage_cost,
+                self.config.wastage_cost,
+                self.config.holding_cost,
             ]
         )
 
@@ -421,36 +440,6 @@ class MirjaliliPlateletPerishable(Problem):
         next_state = jnp.hstack([next_weekday, closing_stock]).astype(jnp.int32)
 
         return next_state, reward
-
-    def get_problem_config(self) -> MirjaliliPlateletPerishableConfig:
-        """Get problem configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this problem instance
-        """
-        return MirjaliliPlateletPerishableConfig(
-            max_demand=int(self.max_demand),
-            weekday_demand_negbin_n=tuple(
-                [float(x) for x in self.weekday_demand_negbin_n]
-            ),
-            weekday_demand_negbin_delta=tuple(
-                [float(x) for x in self.weekday_demand_negbin_delta]
-            ),
-            max_useful_life=int(self.max_useful_life),
-            useful_life_at_arrival_distribution_c_0=tuple(
-                [float(x) for x in self.useful_life_at_arrival_distribution_c_0]
-            ),
-            useful_life_at_arrival_distribution_c_1=tuple(
-                [float(x) for x in self.useful_life_at_arrival_distribution_c_1]
-            ),
-            max_order_quantity=int(self.max_order_quantity),
-            variable_order_cost=float(self.cost_components[0]),
-            fixed_order_cost=float(self.cost_components[1]),
-            shortage_cost=float(self.cost_components[2]),
-            wastage_cost=float(self.cost_components[3]),
-            holding_cost=float(self.cost_components[4]),
-        )
 
     # Supporting functions for __init__()
     # ----------------------------------

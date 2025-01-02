@@ -27,7 +27,31 @@ from mdpax.utils.types import (
 
 @dataclass
 class HendrixTwoProductPerishableConfig(ProblemConfig):
-    """Configuration for the Hendrix Perishable Substitution Two Product problem."""
+    """Configuration for the HendrixTwoProductPerishable problem.
+
+    Args:
+        max_useful_life: Number of periods before stock expires. Must be >= 1.
+        demand_poisson_mean_a: Mean of Poisson distribution for product A demand. Must be positive.
+        demand_poisson_mean_b: Mean of Poisson distribution for product B demand. Must be positive.
+        substitution_probability: Probability of substituting A for B when B is out. Must be in [0,1].
+        variable_order_cost_a: Cost per unit of product A ordered
+        variable_order_cost_b: Cost per unit of product B ordered
+        sales_price_a: Revenue per unit of product A sold
+        sales_price_b: Revenue per unit of product B sold
+        max_order_quantity_a: Maximum units of product A that can be ordered. Must be positive.
+        max_order_quantity_b: Maximum units of product B that can be ordered. Must be positive.
+
+    Example:
+        >>> config = HendrixTwoProductPerishableConfig(
+        ...     max_useful_life=3,
+        ...     demand_poisson_mean_a=4.0,
+        ...     max_order_quantity_a=15,
+        ... )
+        >>> problem = HendrixTwoProductPerishable(config=config)
+
+        # Or using kwargs:
+        >>> problem = HendrixTwoProductPerishable(max_useful_life=3)
+    """
 
     _target_: str = (
         "mdpax.problems.perishable_inventory.hendrix_two_product.HendrixTwoProductPerishable"
@@ -42,6 +66,21 @@ class HendrixTwoProductPerishableConfig(ProblemConfig):
     sales_price_b: float = 1.0
     max_order_quantity_a: int = 10
     max_order_quantity_b: int = 10
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.max_useful_life < 1:
+            raise ValueError("max_useful_life must be greater than or equal to 1")
+        if self.demand_poisson_mean_a <= 0:
+            raise ValueError("demand_poisson_mean_a must be positive")
+        if self.demand_poisson_mean_b <= 0:
+            raise ValueError("demand_poisson_mean_b must be positive")
+        if not 0 <= self.substitution_probability <= 1:
+            raise ValueError("substitution_probability must be between 0 and 1")
+        if self.max_order_quantity_a <= 0:
+            raise ValueError("max_order_quantity_a must be positive")
+        if self.max_order_quantity_b <= 0:
+            raise ValueError("max_order_quantity_b must be positive")
 
 
 class HendrixTwoProductPerishable(Problem):
@@ -89,49 +128,35 @@ class HendrixTwoProductPerishable(Problem):
         deterministic given the number of products of each type issued.
 
     Args:
-        max_useful_life: Number of periods before stock expires, m >= 1
-        demand_poisson_mean_a: Mean of Poisson distribution for product A demand
-        demand_poisson_mean_b: Mean of Poisson distribution for product B demand
-        substitution_probability: Probability of substituting A for B when B is out
-        variable_order_cost_a: Cost per unit of product A ordered
-        variable_order_cost_b: Cost per unit of product B ordered
-        sales_price_a: Revenue per unit of product A sold
-        sales_price_b: Revenue per unit of product B sold
-        max_order_quantity_a: Maximum units of product A that can be ordered
-        max_order_quantity_b: Maximum units of product B that can be ordered
+        config: Configuration object. If provided, keyword arguments are ignored.
+        **kwargs: Parameters matching :class:`HendrixTwoProductPerishableConfig`.
+            See Config class for detailed parameter descriptions.
     """
 
-    def __init__(
-        self,
-        max_useful_life: int = 2,
-        demand_poisson_mean_a: float = 5.0,
-        demand_poisson_mean_b: float = 5.0,
-        substitution_probability: float = 0.5,
-        variable_order_cost_a: float = 0.5,
-        variable_order_cost_b: float = 0.5,
-        sales_price_a: float = 1.0,
-        sales_price_b: float = 1.0,
-        max_order_quantity_a: int = 10,
-        max_order_quantity_b: int = 10,
-    ):
-        assert (
-            max_useful_life >= 1
-        ), "max_useful_life must be greater than or equal to 1"
+    Config = HendrixTwoProductPerishableConfig
 
-        self.max_useful_life = max_useful_life
-        self.demand_poisson_mean_a = demand_poisson_mean_a
-        self.demand_poisson_mean_b = demand_poisson_mean_b
-        self.substitution_probability = substitution_probability
-        self.variable_order_cost_a = variable_order_cost_a
-        self.variable_order_cost_b = variable_order_cost_b
-        self.sales_price_a = sales_price_a
-        self.sales_price_b = sales_price_b
+    def __init__(
+        self, config: HendrixTwoProductPerishableConfig | None = None, **kwargs
+    ):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self.Config(**kwargs)
+
+        self.max_useful_life = self.config.max_useful_life
+        self.demand_poisson_mean_a = self.config.demand_poisson_mean_a
+        self.demand_poisson_mean_b = self.config.demand_poisson_mean_b
+        self.substitution_probability = self.config.substitution_probability
+        self.variable_order_cost_a = self.config.variable_order_cost_a
+        self.variable_order_cost_b = self.config.variable_order_cost_b
+        self.sales_price_a = self.config.sales_price_a
+        self.sales_price_b = self.config.sales_price_b
         self.variable_order_costs = jnp.array(
             [self.variable_order_cost_a, self.variable_order_cost_b]
         )
         self.sales_prices = jnp.array([self.sales_price_a, self.sales_price_b])
-        self.max_order_quantity_a = max_order_quantity_a
-        self.max_order_quantity_b = max_order_quantity_b
+        self.max_order_quantity_a = self.config.max_order_quantity_a
+        self.max_order_quantity_b = self.config.max_order_quantity_b
 
         super().__init__()
 
@@ -359,26 +384,6 @@ class HendrixTwoProductPerishable(Problem):
             Expected sales revenue for one step from this state
         """
         return self._calculate_expected_sales_revenue(state)
-
-    def get_problem_config(self) -> HendrixTwoProductPerishableConfig:
-        """Get problem configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this problem instance
-        """
-        return HendrixTwoProductPerishableConfig(
-            max_useful_life=self.max_useful_life,
-            demand_poisson_mean_a=self.demand_poisson_mean_a,
-            demand_poisson_mean_b=self.demand_poisson_mean_b,
-            substitution_probability=self.substitution_probability,
-            variable_order_cost_a=self.variable_order_cost_a,
-            variable_order_cost_b=self.variable_order_cost_b,
-            sales_price_a=self.sales_price_a,
-            sales_price_b=self.sales_price_b,
-            max_order_quantity_a=self.max_order_quantity_a,
-            max_order_quantity_b=self.max_order_quantity_b,
-        )
 
     # Transition function helper methods
     # ----------------------------------

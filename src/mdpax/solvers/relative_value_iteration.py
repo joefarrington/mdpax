@@ -207,7 +207,7 @@ class RelativeValueIteration(ValueIteration):
             this solver instance
         """
         return RelativeValueIterationConfig(
-            problem=self.problem.get_problem_config(),
+            problem=self.problem.config,
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,

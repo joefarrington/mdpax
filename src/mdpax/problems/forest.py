@@ -1,8 +1,7 @@
 """Forest management MDP problem."""
 
-from dataclasses import dataclass
-
 import jax.numpy as jnp
+from hydra.conf import dataclass
 
 from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.utils.types import (
@@ -18,14 +17,21 @@ from mdpax.utils.types import (
 
 @dataclass
 class ForestConfig(ProblemConfig):
-    """Configuration for the Forest Management problem.
+    """Configuration for the Forest problem.
 
+    Args:
+        S: Number of states (tree ages from 0 to S-1). Controls the maximum
+            age the forest can reach. Must be positive.
+        r1: Reward for waiting when forest in oldest state.
+        r2: Reward for cutting when forest in oldest state.
+        p: Base probability of fire. Must be in [0,1].
 
-    Attributes:
-        S: Number of states (tree ages from 0 to S-1)
-        r1: Reward for waiting when forest in oldest state
-        r2: Reward for cutting when forest in oldest state
-        p: Base probability of fire
+    Example:
+        >>> config = ForestConfig(S=4, r1=5.0, r2=2.0, p=0.1)
+        >>> problem = Forest(config=config)
+
+        # Or using kwargs:
+        >>> problem = Forest(S=4, r1=5.0)  # Other params use defaults
     """
 
     _target_: str = "mdpax.problems.forest.Forest"
@@ -33,6 +39,13 @@ class ForestConfig(ProblemConfig):
     r1: float = 4.0
     r2: float = 2.0
     p: float = 0.1
+
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.S <= 0:
+            raise ValueError("Number of states (S) must be positive")
+        if not 0 <= self.p <= 1:
+            raise ValueError("Probability (p) must be between 0 and 1")
 
 
 class Forest(Problem):
@@ -68,20 +81,23 @@ class Forest(Problem):
               r1 reward if in oldest state
 
     Args:
-        S: Number of states (tree ages from 0 to S-1)
-        r1: Reward for waiting when forest in oldest state
-        r2: Reward for cutting when forest in oldest state
-        p: Base probability of fire
+        config: Configuration object. If provided, keyword arguments are ignored.
+        **kwargs: Parameters matching :class:`ForestConfig`. See ForestConfig
+            for detailed parameter descriptions.
     """
 
-    def __init__(self, S: int = 3, r1: float = 4.0, r2: float = 2.0, p: float = 0.1):
-        assert S > 0, "Number of states must be positive"
-        assert 0 <= p <= 1, "Probability must be between 0 and 1"
+    Config = ForestConfig
 
-        self.S = S
-        self.r1 = r1
-        self.r2 = r2
-        self.p = p
+    def __init__(self, config: ForestConfig | None = None, **kwargs):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self.Config(**kwargs)
+
+        self.S = self.config.S
+        self.r1 = self.config.r1
+        self.r2 = self.config.r2
+        self.p = self.config.p
         self.probability_matrix = jnp.array([[1 - self.p, self.p], [1, 0]])
         super().__init__()
 
@@ -193,17 +209,3 @@ class Forest(Problem):
         ).astype(jnp.int32)
 
         return next_state, reward
-
-    def get_problem_config(self) -> ForestConfig:
-        """Get problem configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this problem instance
-        """
-        return ForestConfig(
-            S=self.S,
-            r1=float(self.r1),
-            r2=float(self.r2),
-            p=float(self.p),
-        )
