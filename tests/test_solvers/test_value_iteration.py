@@ -1,5 +1,7 @@
 import os
 
+import jax
+import jax.numpy as jnp
 import mdptoolbox.example
 import numpy as np
 import pandas as pd
@@ -8,6 +10,8 @@ import pytest
 from mdpax.problems.de_moor_perishable import DeMoorPerishable
 from mdpax.problems.forest import Forest
 from mdpax.solvers.value_iteration import ValueIteration
+
+jax.config.update("jax_enable_x64", True)
 
 
 class TestValueIterationPolicy:
@@ -41,26 +45,39 @@ class TestValueIterationPolicy:
     def test_forest_matches_pymdptoolbox(self, params):
         """Test policy matches pymdptoolbox implementation.
 
-        Verifies that our implementation produces the same policies as pymdptoolbox
-        for the Forest Management problem under different parameter settings.
+        Verifies that our implementation produces the same policies and values as
+        pymdptoolbox, with the same number of iterations, for the Forest Management
+        problem under different parameter settings.
         """
         # Get matrices from both implementations
         P, R = mdptoolbox.example.forest(**params)
         vi = mdptoolbox.mdp.ValueIteration(P, R, 0.9)
         vi.run()
-        pymdptoolbox_policy = vi.policy
+        pymdptoolbox_policy = np.array(vi.policy)
+        pymdptoolbox_values = np.array(vi.V)
+        pymdptoolbox_iter = vi.iter
 
         forest = Forest(**params)
-        solver = ValueIteration(forest, gamma=0.9, epsilon=0.01)
+        solver = ValueIteration(forest, gamma=0.9, epsilon=0.01, verbose=0)
         result = solver.solve()
-        policy = result.policy
+        mdpax_policy = result.policy.reshape(-1)
+        mdpax_values = result.values.reshape(-1)
+        mdpax_iter = result.info.iteration
 
-        np.testing.assert_allclose(
-            pymdptoolbox_policy,
-            policy.reshape(-1),
-            rtol=1e-5,
-            err_msg="Policy doesn't match pymdptoolbox",
-        )
+        # Policy comparison (integer arrays)
+        assert jnp.array_equal(
+            mdpax_policy, pymdptoolbox_policy
+        ), "Policy doesn't match pymdptoolbox"
+
+        # Values comparison (float arrays)
+        assert mdpax_values == pytest.approx(
+            pymdptoolbox_values, rel=1e-5
+        ), "Values don't match pymdptoolbox"
+
+        # Iteration comparison (integers)
+        assert (
+            mdpax_iter == pymdptoolbox_iter
+        ), "Number of iterations doesn't match pymdptoolbox"
 
     @pytest.mark.parametrize(
         "issuing_policy,reported_policy_filename",
@@ -89,8 +106,8 @@ class TestValueIterationPolicy:
         os.chdir(tmpdir)
 
         problem = DeMoorPerishable(issue_policy=issuing_policy)
-        solver = ValueIteration(problem, gamma=0.99, max_iter=5000, epsilon=1e-5)
-        result = solver.solve()
+        solver = ValueIteration(problem, gamma=0.99, epsilon=1e-5, verbose=0)
+        result = solver.solve(max_iterations=5000)
         policy = result.policy.reshape(-1)
 
         vi_policy = pd.DataFrame(policy)
@@ -119,6 +136,46 @@ class TestValueIterationPolicy:
             header=0,
         )
 
-        assert np.all(
-            vi_policy.values == reported_policy.values
+        # Policy comparison (integer arrays)
+        assert jnp.array_equal(
+            vi_policy.values, reported_policy.values
+        ), "Policy doesn't match"
+
+    @pytest.mark.parametrize(
+        "max_useful_life,lead_time,issue_policy,reported_policy_filename",
+        [
+            pytest.param(
+                3,
+                2,
+                "lifo",
+                "de_moor_perishable_m3_exp5_visojax.csv",
+                id="de_moor/m3/exp5",
+            ),
+        ],
+    )
+    def test_de_moor_matches_viso_jax_reference_policy(
+        self,
+        shared_datadir,
+        max_useful_life,
+        lead_time,
+        issue_policy,
+        reported_policy_filename,
+    ):
+        """Test policy matches reference policy from viso_jax."""
+        problem = DeMoorPerishable(
+            max_useful_life=max_useful_life,
+            lead_time=lead_time,
+            issue_policy=issue_policy,
+        )
+        solver = ValueIteration(problem, gamma=0.99, epsilon=1e-5, verbose=0)
+        result = solver.solve(max_iterations=5000)
+        policy = result.policy.reshape(-1)
+        reported_policy = pd.read_csv(
+            f"{shared_datadir}/{reported_policy_filename}",
+            index_col=0,
+            header=0,
+        )
+        # Policy comparison (integer arrays)
+        assert jnp.array_equal(
+            policy, reported_policy.values.flatten()
         ), "Policy doesn't match"

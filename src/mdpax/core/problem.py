@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 
 import chex
+import jax
 import jax.numpy as jnp
 from hydra.conf import MISSING, dataclass
 from jax import vmap
@@ -240,8 +241,8 @@ class Problem(ABC):
         """
         pass
 
-    def build_matrices(
-        self,
+    def build_transition_and_reward_matrices(
+        self, jax_double_precision: bool = True, normalization_tolerance: float = 1e-4
     ) -> tuple[
         Float[Array, "n_actions n_states n_states"], Float[Array, "n_states n_actions"]
     ]:
@@ -257,6 +258,12 @@ class Problem(ABC):
         The reward matrix R has shape [n_states, n_actions] where:
         - R[s,a] is the expected immediate reward for taking action a in state s
 
+        Args:
+            jax_double_precision: Whether to use double precision in JAX
+            normalization_tolerance: If probabilities sum to within this tolerance of 1,
+                adjust the largest probability to make them sum exactly to 1.
+                Set to 0 to disable this behavior.
+
         Returns:
             tuple containing:
                 - P: Transition probability matrix [n_actions, n_states, n_states]
@@ -265,9 +272,17 @@ class Problem(ABC):
         Note:
             This method is primarily for testing and comparison purposes.
             It explicitly constructs the full transition matrices which is
-            impractical for large state spaces. The main solver implementations
-            use the transition() method directly instead.
+            impractical for large state spaces and will result in a memory error.
+            The main solver implementations use the transition() method directly
+            instead.
+
+            JAX double precision is enabled by default, because this method is
+            designed to be used with mdptoolbox, which checks transition matrix
+            probabilities using double precision in NumPy by default.
         """
+        if jax_double_precision:
+            jax.config.update("jax_enable_x64", True)
+
         states: StateSpace = self.state_space  # [S, state_dim]
         actions: ActionSpace = self.action_space  # [A, action_dim]
         random_events: RandomEventSpace = self.random_event_space  # [E, event_dim]
@@ -298,9 +313,12 @@ class Problem(ABC):
         )
 
         # Get all transitions and probabilities at once
-        next_states_rewards = v_transition(states, actions, random_events)  # [S, A, E]
-        next_states, rewards = next_states_rewards  # Unpack tuple
-        probs = v_probability(states, actions, random_events)  # [S, A, E]
+        # next_states shape: [S, A, E, state_dim]
+        # rewards shape: [S, A, E]
+        # probs shape: [S, A, E]
+        next_states_rewards = v_transition(states, actions, random_events)
+        next_states, rewards = next_states_rewards
+        probs = v_probability(states, actions, random_events)
 
         # Convert all next states to indices
         ns_indices = vmap(
@@ -318,7 +336,11 @@ class Problem(ABC):
         R: Float[Array, "n_states n_actions"] = jnp.zeros((S, A))
 
         # Compute expected rewards - sum over random events
-        R = jnp.sum(probs * rewards.squeeze(), axis=-1)  # [S, A]
+        # Ensure arrays have shape [S, A, E] even when E=1
+        # probs: [S, A, E], rewards: [S, A, E]
+        probs = probs.reshape(S, A, E)  # Ensure 3D shape
+        rewards = rewards.reshape(S, A, E)  # Ensure 3D shape
+        R = jnp.sum(probs * rewards, axis=-1)  # [S, A]
 
         # For each action a, state s, random event e:
         # Add prob[s,a,e] to P[a,s,ns_indices[s,a,e]]
@@ -336,6 +358,25 @@ class Problem(ABC):
                 ].add(
                     p[:, a]
                 )  # Probabilities for this action
+
+        # Check if probabilities sum close enough to 1 before normalizing
+        row_sums = jnp.sum(P, axis=-1)  # [A, S]
+        max_deviation = jnp.max(jnp.abs(row_sums - 1.0))
+        if max_deviation > normalization_tolerance:
+            # Find the worst offending state-action pair
+            action, state = jnp.unravel_index(
+                jnp.argmax(jnp.abs(row_sums - 1.0)), row_sums.shape
+            )
+            raise ValueError(
+                f"Transition probabilities for state {state}, action {action} sum to "
+                f"{row_sums[action, state]:.6f}, which deviates from 1.0 by more than "
+                f"the tolerance of {normalization_tolerance}"
+            )
+
+        # Normalize transition probabilities by dividing each row by its sum
+        # Only reaches here if all probabilities are within tolerance
+        row_sums = row_sums.reshape(A, S, 1)  # Add dimension for broadcasting
+        P = P / jnp.where(row_sums > 0, row_sums, 1.0)  # Avoid division by zero
 
         # Verify shapes
         chex.assert_shape(P, (A, S, S))

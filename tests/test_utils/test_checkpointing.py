@@ -1,6 +1,7 @@
 """Tests for checkpointing functionality."""
 
 import jax.numpy as jnp
+import pytest
 
 from mdpax.problems.de_moor_perishable import DeMoorPerishable
 from mdpax.solvers.value_iteration import ValueIteration
@@ -23,13 +24,12 @@ def test_checkpoint_save_load(tmp_path):
         problem=problem,
         gamma=0.99,
         epsilon=1e-4,
-        max_iter=20,
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=5,
     )
 
     # Run for a few iterations
-    solver.solve()
+    solver.solve(max_iterations=20)
     values_before = solver.values.copy()
     iter_before = solver.iteration
 
@@ -37,7 +37,7 @@ def test_checkpoint_save_load(tmp_path):
     new_solver = ValueIteration.restore(checkpoint_dir)
     # Check state matches
     assert new_solver.iteration == iter_before
-    assert jnp.allclose(new_solver.values, values_before)
+    assert new_solver.values == pytest.approx(values_before)
 
 
 def test_checkpoint_resume_to_convergence(tmp_path):
@@ -55,10 +55,9 @@ def test_checkpoint_resume_to_convergence(tmp_path):
         problem=problem,
         gamma=0.99,
         epsilon=1e-4,
-        max_iter=2000,
         checkpoint_frequency=0,
     )
-    solver1.solve()
+    solver1.solve(max_iterations=2000)
     final_values = solver1.values.copy()
     final_policy = solver1.policy.copy()
 
@@ -68,20 +67,19 @@ def test_checkpoint_resume_to_convergence(tmp_path):
         problem=problem,
         gamma=0.99,
         epsilon=1e-4,
-        max_iter=200,
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=100,
     )
 
     # Run for a few iterations
-    solver2.solve()
+    solver2.solve(max_iterations=200)
 
     # Create new solver and resume
-    solver3 = ValueIteration.restore(checkpoint_dir, max_iter=2000)
-    solver3.solve()
+    solver3 = ValueIteration.restore(checkpoint_dir)
+    solver3.solve(max_iterations=2000)
 
     # Check final results match
-    assert jnp.allclose(solver3.values, final_values)
+    assert solver3.values == pytest.approx(final_values)
     assert jnp.array_equal(solver3.policy, final_policy)
 
 
@@ -95,7 +93,6 @@ def test_max_checkpoints_retained(tmp_path):
         problem=problem,
         gamma=0.99,
         epsilon=1e-4,
-        max_iter=2000,
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=checkpoint_frequency,
         max_checkpoints=max_checkpoints,
@@ -125,25 +122,22 @@ def test_custom_checkpoint_config_on_restore(tmp_path):
         problem=problem,
         gamma=0.99,
         epsilon=1e-4,
-        max_iter=500,
         checkpoint_dir=checkpoint_dir,
         checkpoint_frequency=100,
         max_checkpoints=1,
     )
-    solver.solve()
+    solver.solve(max_iterations=500)
 
     # Create new solver with different config
     new_checkpoint_dir = (
         tmp_path / "checkpoints" / "test_custom_checkpoint_config_on_restore_new"
     )
-    new_max_iter = 2000
     new_checkpoint_frequency = 50
     new_max_checkpoints = 3
     new_enable_async_checkpointing = False
     new_solver = ValueIteration.restore(
         checkpoint_dir=checkpoint_dir,
         new_checkpoint_dir=new_checkpoint_dir,
-        max_iter=new_max_iter,
         checkpoint_frequency=new_checkpoint_frequency,
         max_checkpoints=new_max_checkpoints,
         enable_async_checkpointing=new_enable_async_checkpointing,

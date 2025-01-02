@@ -42,13 +42,13 @@ class CheckpointMixin(ABC):
 
     Example:
         >>> solver = MySolver(problem,
-        ...     checkpoint_dir="checkpoints/",
+        ...     checkpoint_dir="checkpoints/my_problem",
         ...     checkpoint_frequency=100,
         ...     enable_async_checkpointing=True
         ... )
-        >>> # During training, solver.save() is called periodically
+        >>> # During training, solver.save(step=iteration) is called periodically
         >>> # Later, restore the solver
-        >>> solver = MySolver.restore("checkpoints/", step=1000)
+        >>> solver = MySolver.restore("checkpoint/my_problem")
     """
 
     def setup_checkpointing(
@@ -105,7 +105,7 @@ class CheckpointMixin(ABC):
             )
         else:
             self.checkpoint_manager = None
-            logger.info("Checkpointing disabled")
+            logger.info("Checkpointing not enabled")
 
     @property
     def is_checkpointing_enabled(self) -> bool:
@@ -184,7 +184,6 @@ class CheckpointMixin(ABC):
         cls,
         checkpoint_dir: str | Path,
         step: Optional[int] = None,
-        max_iter: Optional[int] = None,
         new_checkpoint_dir: Optional[str | Path] = None,
         checkpoint_frequency: Optional[int] = None,
         max_checkpoints: Optional[int] = None,
@@ -199,7 +198,6 @@ class CheckpointMixin(ABC):
         Args:
             checkpoint_dir: Directory containing checkpoints.
             step: Specific step to load. If None, loads the latest checkpoint.
-            max_iter: Optional new maximum number of iterations.
             new_checkpoint_dir: Optional new directory for future checkpoints.
                 Useful when restoring to a different location.
             checkpoint_frequency: Optional new checkpoint frequency.
@@ -222,9 +220,6 @@ class CheckpointMixin(ABC):
         if new_checkpoint_dir is not None:
             new_checkpoint_dir = Path(new_checkpoint_dir).absolute()
             config.checkpoint_dir = new_checkpoint_dir
-
-        if max_iter is not None:
-            config.max_iter = max_iter
 
         if checkpoint_frequency is not None:
             config.checkpoint_frequency = checkpoint_frequency

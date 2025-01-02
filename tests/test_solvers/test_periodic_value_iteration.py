@@ -1,6 +1,6 @@
 import os
 
-import numpy as np
+import jax.numpy as jnp
 import pandas as pd
 import pytest
 
@@ -43,12 +43,11 @@ class TestPeriodicValueIterationPolicy:
         solver = PeriodicValueIteration(
             problem,
             gamma=0.95,
-            max_iter=30,
             period=7,
             max_batch_size=5000,
             epsilon=1e-4,
         )
-        result = solver.solve()
+        result = solver.solve(max_iterations=30)
         policy = result.policy.reshape(-1)
 
         # Load in the reported policy
@@ -57,6 +56,5 @@ class TestPeriodicValueIterationPolicy:
             index_col=0,
             header=0,
         )
-        assert np.all(
-            reported_policy.values.reshape(-1) == policy
-        ), "Policy doesn't match"
+        reported_policy = jnp.array(reported_policy_df.values.reshape(-1))
+        assert jnp.array_equal(reported_policy, policy)

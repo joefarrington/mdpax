@@ -75,8 +75,6 @@ def space_with_dimensions_to_index(
     """Convert a vector to a flat index based on dimension sizes.
 
     Uses row-major (C-style) ordering to compute a unique index for each vector.
-    The 'wrap' mode means any vector will map to a valid index, which can
-    be useful for handling out-of-bounds states.
 
     This is designed to be used when the state space is generated from bounds
     using `construct_space_from_bounds` but can also be used with action
@@ -91,6 +89,12 @@ def space_with_dimensions_to_index(
     Returns:
         Unique integer index for the vector.
 
+    Note:
+    The 'clip' mode means any vector will map to a valid index. This is necessary
+    for compatibility with JAX's jit compilation but may lead to unexpected results
+    if the vector is not within the bounds.
+    https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ravel_multi_index.html
+
     Example:
         >>> state = jnp.array([1, 2])
         >>> dimensions = (2, 3)  # 2 possible values in dim 0, 3 in dim 1
@@ -98,4 +102,4 @@ def space_with_dimensions_to_index(
         >>> print(index)
         5  # = 1 * 3 + 2 in row-major ordering
     """
-    return jnp.ravel_multi_index(tuple(vector), space_dimensions, mode="wrap")
+    return jnp.ravel_multi_index(tuple(vector), space_dimensions, mode="clip")

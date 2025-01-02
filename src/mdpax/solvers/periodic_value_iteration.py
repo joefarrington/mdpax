@@ -81,7 +81,6 @@ class PeriodicValueIteration(ValueIteration):
         problem: MDP problem to solve
         period: Number of iterations to check for periodic convergence
         gamma: Discount factor in [0,1]
-        max_iter: Maximum number of iterations to run
         epsilon: Convergence threshold for value changes
         max_batch_size: Maximum states to process in parallel on each device
         jax_double_precision: Whether to use float64 precision
@@ -99,7 +98,6 @@ class PeriodicValueIteration(ValueIteration):
         problem: Problem,
         period: int,
         gamma: float = 0.99,
-        max_iter: int = 1000,
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
@@ -139,7 +137,6 @@ class PeriodicValueIteration(ValueIteration):
         super().__init__(
             problem,
             gamma=gamma,
-            max_iter=max_iter,
             epsilon=epsilon,
             max_batch_size=max_batch_size,
             jax_double_precision=jax_double_precision,
@@ -199,7 +196,7 @@ class PeriodicValueIteration(ValueIteration):
 
         return new_values, conv
 
-    def solve(self) -> PeriodicValueIterationState:
+    def solve(self, max_iterations: int = 2000) -> PeriodicValueIterationState:
         """Run periodic value iteration to convergence.
 
         Performs synchronous value iteration updates until either:
@@ -213,12 +210,12 @@ class PeriodicValueIteration(ValueIteration):
                 - Optimal policy [n_states, action_dim]
                 - Solver info including value history
         """
-        while self.iteration < self.max_iter:
+        for _ in range(max_iterations):
             self.iteration += 1
             new_values, conv = self._iteration_step()
             self.values = new_values
 
-            logger.info(f"Iteration {self.iteration}: delta_diff: {conv:.4f}")
+            logger.info(f"Iteration {self.iteration}: period_span: {conv:.4f}")
 
             # Check convergence
             if conv < self.epsilon:
@@ -318,7 +315,6 @@ class PeriodicValueIteration(ValueIteration):
             problem=self.problem.get_problem_config(),
             period=self.period,
             gamma=float(self.gamma),
-            max_iter=self.max_iter,
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,

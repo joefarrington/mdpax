@@ -4,22 +4,21 @@ from pathlib import Path
 
 import chex
 import jax.numpy as jnp
-from hydra.conf import dataclass
+from hydra.conf import MISSING, dataclass
 from loguru import logger
 
-from mdpax.core.problem import Problem
+from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.core.solver import SolverInfo, SolverState
-from mdpax.solvers.value_iteration import ValueIteration, ValueIterationConfig
+from mdpax.solvers.value_iteration import ValueIteration
 from mdpax.utils.types import ValueFunction
 
 
 @dataclass
-class RelativeValueIterationConfig(ValueIterationConfig):
+class RelativeValueIterationConfig:
     """Configuration for the Relative Value Iteration solver.
 
-    This solver is designed for average reward problems and extends the base
-    value iteration solver. It forces gamma=1.0 as required for average reward
-    optimization.
+    TODO: Need to define fresh because no gamma - need to think
+    about best way to deal with this.
 
     Attributes:
         _target_: Full path to solver class for Hydra instantiation
@@ -27,7 +26,17 @@ class RelativeValueIterationConfig(ValueIterationConfig):
     """
 
     _target_: str = "mdpax.solvers.relative_value_iteration.RelativeValueIteration"
-    gamma: float = 1.0
+    problem: ProblemConfig = MISSING
+
+    # Solver parameters
+    epsilon: float = 1e-3
+    max_batch_size: int = 1024
+    jax_double_precision: bool = True
+    verbose: int = 2  # Default to INFO level
+    checkpoint_dir: str | None = None
+    checkpoint_frequency: int = 0
+    max_checkpoints: int = 1
+    enable_async_checkpointing: bool = True
 
 
 @chex.dataclass(frozen=True)
@@ -68,7 +77,6 @@ class RelativeValueIteration(ValueIteration):
 
      Args:
         problem: MDP problem to solve
-        max_iter: Maximum number of iterations to run
         epsilon: Convergence threshold for value changes
         max_batch_size: Maximum states to process in parallel on each device
         jax_double_precision: Whether to use float64 precision
@@ -82,7 +90,6 @@ class RelativeValueIteration(ValueIteration):
     def __init__(
         self,
         problem: Problem,
-        max_iter: int = 1000,
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
@@ -100,7 +107,6 @@ class RelativeValueIteration(ValueIteration):
         super().__init__(
             problem,
             gamma=1.0,  # Fixed for average reward case
-            max_iter=max_iter,
             epsilon=epsilon,
             max_batch_size=max_batch_size,
             jax_double_precision=jax_double_precision,
@@ -138,12 +144,15 @@ class RelativeValueIteration(ValueIteration):
 
         return new_values, span
 
-    def solve(self) -> RelativeValueIterationState:
+    def solve(self, max_iterations: int = 2000) -> RelativeValueIterationState:
         """Run relative value iteration.
 
         Performs synchronous value iteration updates until either:
         1. The span of value differences is below epsilon
         2. The maximum number of iterations is reached
+
+        Args:
+            max_iterations: Maximum number of iterations to run
 
         Returns:
             SolverState containing:
@@ -151,7 +160,7 @@ class RelativeValueIteration(ValueIteration):
                 - Optimal policy [n_states, action_dim]
                 - Solver info including iteration count and gain term
         """
-        while self.iteration < self.max_iter:
+        for _ in range(max_iterations):
             self.iteration += 1
             new_values, conv = self._iteration_step()
             self.values = new_values
@@ -196,7 +205,6 @@ class RelativeValueIteration(ValueIteration):
         """
         return RelativeValueIterationConfig(
             problem=self.problem.get_problem_config(),
-            max_iter=self.max_iter,
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,

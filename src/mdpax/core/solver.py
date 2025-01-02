@@ -37,7 +37,6 @@ class SolverConfig:
 
     # Solver parameters
     gamma: float = 0.99
-    max_iter: int = 1000
     epsilon: float = 1e-3
     max_batch_size: int = 1024
     jax_double_precision: bool = True
@@ -106,7 +105,6 @@ class Solver(ABC):
     Args:
         problem: MDP problem to solve
         gamma: Discount factor in [0,1]
-        max_iter: Maximum number of iterations to run
         epsilon: Convergence threshold
         max_batch_size: Maximum states to process in parallel on each device
         jax_double_precision: Whether to use float64 precision
@@ -117,7 +115,6 @@ class Solver(ABC):
         self,
         problem: Problem,
         gamma: float = 0.99,
-        max_iter: int = 1000,
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
@@ -126,7 +123,6 @@ class Solver(ABC):
         if not isinstance(problem, Problem):
             raise TypeError("problem must be an instance of Problem")
         assert 0 <= gamma <= 1, "Discount factor must be in [0,1]"
-        assert max_iter > 0, "Max iterations must be positive"
         assert epsilon > 0, "Epsilon must be positive"
         assert max_batch_size > 0, "Batch size must be positive"
 
@@ -137,7 +133,6 @@ class Solver(ABC):
         self.max_batch_size = max_batch_size
         self.problem = problem
         self.gamma = jnp.array(gamma)
-        self.max_iter = max_iter
         self.epsilon = epsilon
 
         # Set initial verbosity
@@ -262,13 +257,16 @@ class Solver(ABC):
         """
         pass
 
-    def solve(self) -> SolverState:
+    def solve(self, max_iterations: int = 2000) -> SolverState:
         """Run solver to convergence or max iterations.
+
+        Args:
+            max_iterations: Maximum number of iterations to run
 
         Returns:
             SolverState containing final values, policy, and solver info
         """
-        while self.iteration < self.max_iter:
+        for _ in range(max_iterations):
             new_values, conv = self._iteration_step()
             if conv < self.epsilon:
                 break

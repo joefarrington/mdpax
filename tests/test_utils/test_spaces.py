@@ -29,7 +29,7 @@ def test_space_dimensions_from_bounds():
 
     # Should be (2, 3, 4) - each dimension is max - min + 1
     assert dimensions == (2, 3, 4)
-    assert len(dimensions) == 3  # Check dimensionality
+    assert len(dimensions) == 3
 
 
 @pytest.mark.parametrize(
@@ -41,7 +41,7 @@ def test_space_dimensions_from_bounds():
         pytest.param(jnp.array([1, 2]), (2, 3), 5, id="last_element"),
         pytest.param(jnp.array([0]), (2,), 0, id="single_dimension_first"),
         pytest.param(jnp.array([1]), (2,), 1, id="single_dimension_last"),
-        pytest.param(jnp.array([2, 1]), (2, 2), 1, id="wrap_around"),
+        pytest.param(jnp.array([2, 1]), (2, 2), 3, id="clip_mode"),
     ],
 )
 def test_space_with_dimensions_to_index(vector, dimensions, expected_index):
@@ -80,8 +80,8 @@ def test_space_edge_cases():
     space = construct_space_from_bounds((mins, maxs))
     assert space.shape == (2, 2)
 
-    # Wrap-around indexing
+    # Clip indexing
     dimensions = (2, 2)
     vector = jnp.array([2, 1])  # Out of bounds
     index = space_with_dimensions_to_index(vector, dimensions)
-    assert index >= 0 and index < 4  # Should wrap to valid index
+    assert index >= 0 and index < 4  # Should be clipped to valid index

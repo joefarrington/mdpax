@@ -58,9 +58,15 @@ def test_space_construction(params, expected_spaces):
     """
     problem = HendrixPerishableSubstitutionTwoProduct(**params)
 
-    assert problem.n_states == expected_spaces["n_states"]
-    assert problem.n_actions == expected_spaces["n_actions"]
-    assert problem.n_random_events == expected_spaces["n_random_events"]
+    assert (
+        problem.n_states == expected_spaces["n_states"]
+    ), "State space size doesn't match"
+    assert (
+        problem.n_actions == expected_spaces["n_actions"]
+    ), "Action space size doesn't match"
+    assert (
+        problem.n_random_events == expected_spaces["n_random_events"]
+    ), "Random event space size doesn't match"
 
 
 @pytest.mark.parametrize(
@@ -81,8 +87,8 @@ def test_transition(state, action, random_event, expected_next_state, expected_r
     """Test specific transitions have expected outcomes."""
     problem = HendrixPerishableSubstitutionTwoProduct()
     next_state, reward = problem.transition(state, action, random_event)
-    assert jnp.array_equal(next_state, expected_next_state)
-    assert reward == pytest.approx(expected_reward)
+    assert jnp.array_equal(next_state, expected_next_state), "Next state doesn't match"
+    assert reward == pytest.approx(expected_reward), "Reward doesn't match"
 
 
 @pytest.mark.parametrize(

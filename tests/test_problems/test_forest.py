@@ -1,16 +1,7 @@
-"""Tests for Forest MDP problem.
-
-Tests verify that:
-1. Problem construction matches expected dimensions
-2. Transitions and rewards match expected values
-3. Random event probabilities are correct
-4. Initial values are zero
-5. Transition and reward matrices match pymdptoolbox implementation
-"""
+"""Tests for Forest MDP problem."""
 
 import jax.numpy as jnp
 import mdptoolbox.example
-import numpy as np
 import pytest
 
 from mdpax.problems.forest import Forest
@@ -58,9 +49,15 @@ def test_space_construction(params, expected_spaces):
     - Random event space size = 2 (fire or no fire)
     """
     problem = Forest(**params)
-    assert problem.n_states == expected_spaces["n_states"]
-    assert problem.n_actions == expected_spaces["n_actions"]
-    assert problem.n_random_events == expected_spaces["n_random_events"]
+    assert (
+        problem.n_states == expected_spaces["n_states"]
+    ), "State space size doesn't match"
+    assert (
+        problem.n_actions == expected_spaces["n_actions"]
+    ), "Action space size doesn't match"
+    assert (
+        problem.n_random_events == expected_spaces["n_random_events"]
+    ), "Random event space size doesn't match"
 
 
 @pytest.mark.parametrize(
@@ -89,19 +86,11 @@ def test_matrices_match_pymdptoolbox(params):
     # Get matrices from both implementations
     P_orig, R_orig = mdptoolbox.example.forest(**params)
     forest = Forest(**params)
-    P_new, R_new = forest.build_matrices()
+    P_new, R_new = forest.build_transition_and_reward_matrices()
 
-    # Convert to numpy for comparison
-    P_new = np.array(P_new)
-    R_new = np.array(R_new)
-
-    # Compare matrices
-    np.testing.assert_allclose(
-        P_orig, P_new, rtol=1e-5, err_msg="Transition matrices don't match"
-    )
-    np.testing.assert_allclose(
-        R_orig, R_new, rtol=1e-5, err_msg="Reward matrices don't match"
-    )
+    # Compare matrices (both are float arrays)
+    assert P_new == pytest.approx(P_orig, rel=1e-5), "Transition matrices don't match"
+    assert R_new == pytest.approx(R_orig, rel=1e-5), "Reward matrices don't match"
 
 
 @pytest.mark.parametrize(
@@ -152,8 +141,8 @@ def test_transition(state, action, random_event, expected_next_state, expected_r
     """
     problem = Forest()
     next_state, reward = problem.transition(state, action, random_event)
-    assert jnp.array_equal(next_state, expected_next_state)
-    assert reward == pytest.approx(expected_reward)
+    assert jnp.array_equal(next_state, expected_next_state), "Next state doesn't match"
+    assert reward == pytest.approx(expected_reward), "Reward doesn't match"
 
 
 @pytest.mark.parametrize(

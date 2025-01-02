@@ -46,13 +46,16 @@ class ValueIteration(Solver, CheckpointMixin):
     across devices. States are automatically batched and padded for efficient
     parallel processing.
 
-    Note:
+    Notes:
         Supports checkpointing for long-running problems.
+
+        Convergence test follows mdptoolbox instead of viso_jax,
+        using the span of differences in values instead of maximum
+        absolute difference.
 
     Args:
         problem: MDP problem to solve
         gamma: Discount factor in [0,1]
-        max_iter: Maximum number of iterations to run
         epsilon: Convergence threshold for value changes
         max_batch_size: Maximum states to process in parallel on each device
         jax_double_precision: Whether to use float64 precision
@@ -68,7 +71,6 @@ class ValueIteration(Solver, CheckpointMixin):
         self,
         problem: Problem,
         gamma: float = 0.99,
-        max_iter: int = 1000,
         epsilon: float = 1e-3,
         max_batch_size: int = 1024,
         jax_double_precision: bool = True,
@@ -82,7 +84,6 @@ class ValueIteration(Solver, CheckpointMixin):
         super().__init__(
             problem,
             gamma,
-            max_iter,
             epsilon,
             max_batch_size,
             jax_double_precision,
@@ -99,6 +100,15 @@ class ValueIteration(Solver, CheckpointMixin):
     def _setup_solver(self) -> None:
         """Setup solver-specific computations."""
         # Cache problem methods at the start
+
+        # Convergence threshold for span of differences in values
+        # as in mdptoolbox
+        # https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/mdp.py
+        self._thresh = (
+            self.epsilon
+            if self.gamma == 1
+            else self.epsilon * (1 - self.gamma) / self.gamma
+        )
 
         self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_updated_value_scan_state_batches,
@@ -323,9 +333,19 @@ class ValueIteration(Solver, CheckpointMixin):
             self.values,
         )
 
-        # Calculate convergence measure, max absolute difference in values
-        conv = jnp.max(jnp.abs(new_values - self.values))
+        # Calculate convergence measure, span of differences in values
+        # as in mdptoolbox
+        # https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/mdp.py
+        # https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/util.py
+        conv = self._get_span(new_values, self.values)
         return new_values, conv
+
+    def _get_span(
+        self, new_values: Float[Array, "n_states"], old_values: Float[Array, "n_states"]
+    ) -> float:
+        """Get the span of differences in values."""
+        delta = new_values - old_values
+        return jnp.max(delta) - jnp.min(delta)
 
     def _update_values(
         self,
@@ -360,12 +380,15 @@ class ValueIteration(Solver, CheckpointMixin):
         policy_idxs = self._unbatch_results(padded_batched_policy_idxs)
         return jnp.take(self.problem.action_space, policy_idxs, axis=0)
 
-    def solve(self) -> SolverState:
+    def solve(self, max_iterations: int = 2000) -> SolverState:
         """Run value iteration.
 
         Performs synchronous value iteration updates until either:
         1. The maximum change in values is below epsilon
         2. The maximum number of iterations is reached
+
+        Args:
+            max_iterations: Maximum number of iterations to run
 
         Returns:
             SolverState containing:
@@ -373,14 +396,14 @@ class ValueIteration(Solver, CheckpointMixin):
                 - Optimal policy [n_states, action_dim]
                 - Solver info including iteration count
         """
-        while self.iteration < self.max_iter:
+        for _ in range(max_iterations):
             self.iteration += 1
             new_values, conv = self._iteration_step()
             self.values = new_values
 
-            logger.info(f"Iteration {self.iteration} maximum delta: {conv:.4f}")
+            logger.info(f"Iteration {self.iteration} span: {conv:.4f}")
 
-            if conv < self.epsilon:
+            if conv < self._thresh:
                 logger.info(
                     f"Convergence threshold reached at iteration {self.iteration}"
                 )
@@ -392,7 +415,7 @@ class ValueIteration(Solver, CheckpointMixin):
             ):
                 self.save(self.iteration)
 
-        if conv >= self.epsilon:
+        if conv >= self._thresh:
             logger.info("Maximum iterations reached")
 
         # Final checkpoint if enabled
@@ -417,7 +440,6 @@ class ValueIteration(Solver, CheckpointMixin):
         return ValueIterationConfig(
             problem=self.problem.get_problem_config(),
             gamma=float(self.gamma),
-            max_iter=self.max_iter,
             epsilon=self.epsilon,
             max_batch_size=self.max_batch_size,
             jax_double_precision=self.jax_double_precision,
