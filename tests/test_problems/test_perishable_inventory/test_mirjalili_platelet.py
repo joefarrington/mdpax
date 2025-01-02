@@ -4,7 +4,9 @@ import jax.numpy as jnp
 import pytest
 import scipy.stats
 
-from mdpax.problems.mirjalili_perishable_platelet import MirjaliliPerishablePlatelet
+from mdpax.problems.perishable_inventory.mirjalili_platelet import (
+    MirjaliliPlateletPerishable,
+)
 
 # Policy on this problem using PeriodicValueIteration solver compared to
 # known results in tests/solvers/test_periodic_value_iteration.py
@@ -47,7 +49,7 @@ def test_space_construction(params, expected_spaces):
     - Action space size = max_order_quantity + 1
     - Random event space size = max_demand + 1
     """
-    problem = MirjaliliPerishablePlatelet(**params)
+    problem = MirjaliliPlateletPerishable(**params)
 
     assert (
         problem.n_states == expected_spaces["n_states"]
@@ -90,7 +92,7 @@ def test_space_construction(params, expected_spaces):
 )
 def test_transition(state, action, random_event, expected_next_state, expected_reward):
     """Test specific transitions have expected outcomes."""
-    problem = MirjaliliPerishablePlatelet()
+    problem = MirjaliliPlateletPerishable()
     next_state, reward = problem.transition(state, action, random_event)
     assert jnp.array_equal(next_state, expected_next_state), "Next state doesn't match"
     assert reward == pytest.approx(expected_reward), "Reward doesn't match"
@@ -174,7 +176,7 @@ def test_random_event_probability(state, action, random_event, params):
        - Both exogenous and endogenous (c_1 > 0)
        - Uses multinomial distribution for unit ages
     """
-    problem = MirjaliliPerishablePlatelet(**params)
+    problem = MirjaliliPlateletPerishable(**params)
     prob = problem.random_event_probability(state, action, random_event)
 
     # Extract components from random event
@@ -249,14 +251,14 @@ def test_random_event_probability(state, action, random_event, params):
 )
 def test_initial_value(state, expected_value):
     """Test initial value estimates for different states"""
-    problem = MirjaliliPerishablePlatelet()
+    problem = MirjaliliPlateletPerishable()
     value = problem.initial_value(state)
     assert value == pytest.approx(expected_value, rel=1e-3)
 
 
 def test_weekday_dependent_demand():
     """Test demand probabilities vary by weekday."""
-    problem = MirjaliliPerishablePlatelet(max_demand=5)
+    problem = MirjaliliPlateletPerishable(max_demand=5)
 
     # Compare Monday vs Sunday probabilities for same state/action
     state_monday = jnp.array([0, 1, 0])  # Monday, 1 new unit

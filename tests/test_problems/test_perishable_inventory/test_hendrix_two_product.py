@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import pytest
 import scipy.stats
 
-from mdpax.problems.hendrix_perishable_substitution_two_product import (
-    HendrixPerishableSubstitutionTwoProduct,
+from mdpax.problems.perishable_inventory.hendrix_two_product import (
+    HendrixTwoProductPerishable,
 )
 
 # Policy on this problem using RelativeValueIteration solver compared to
@@ -56,7 +56,7 @@ def test_space_construction(params, expected_spaces):
     - Random event space size = (max_stock_a + 1) * (max_stock_b + 1)
       where max_stock_x = max_order_quantity_x * max_useful_life
     """
-    problem = HendrixPerishableSubstitutionTwoProduct(**params)
+    problem = HendrixTwoProductPerishable(**params)
 
     assert (
         problem.n_states == expected_spaces["n_states"]
@@ -85,7 +85,7 @@ def test_space_construction(params, expected_spaces):
 )
 def test_transition(state, action, random_event, expected_next_state, expected_reward):
     """Test specific transitions have expected outcomes."""
-    problem = HendrixPerishableSubstitutionTwoProduct()
+    problem = HendrixTwoProductPerishable()
     next_state, reward = problem.transition(state, action, random_event)
     assert jnp.array_equal(next_state, expected_next_state), "Next state doesn't match"
     assert reward == pytest.approx(expected_reward), "Reward doesn't match"
@@ -152,7 +152,7 @@ def test_random_event_probability(
     3. Product A issued less than stock, B equal to stock
     4. Both products issued equal to stock
     """
-    problem = HendrixPerishableSubstitutionTwoProduct(
+    problem = HendrixTwoProductPerishable(
         demand_poisson_mean_a=poisson_mean_a,
         demand_poisson_mean_b=poisson_mean_b,
         substitution_probability=substitution_prob,
@@ -300,7 +300,7 @@ def test_initial_value(
     - Units of A sold = min(stock_a, d_a + u)
     - Units of B sold = min(stock_b, d_b)
     """
-    problem = HendrixPerishableSubstitutionTwoProduct(
+    problem = HendrixTwoProductPerishable(
         sales_price_a=sales_price_a,
         sales_price_b=sales_price_b,
         substitution_probability=substitution_prob,

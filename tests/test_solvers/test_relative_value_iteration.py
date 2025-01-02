@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from mdpax.problems.hendrix_perishable_substitution_two_product import (
-    HendrixPerishableSubstitutionTwoProduct,
+from mdpax.problems.perishable_inventory.hendrix_two_product import (
+    HendrixTwoProductPerishable,
 )
 from mdpax.solvers.relative_value_iteration import RelativeValueIteration
 
@@ -40,7 +40,7 @@ class TestRelativeValueIterationPolicy:
         # Change working directory to avoid clutter
         os.chdir(tmpdir)
 
-        problem = HendrixPerishableSubstitutionTwoProduct()
+        problem = HendrixTwoProductPerishable()
         solver = RelativeValueIteration(
             problem,
             epsilon=1e-4,

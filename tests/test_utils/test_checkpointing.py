@@ -3,7 +3,9 @@
 import jax.numpy as jnp
 import pytest
 
-from mdpax.problems.de_moor_perishable import DeMoorPerishable
+from mdpax.problems.perishable_inventory.de_moor_single_product import (
+    DeMoorSingleProductPerishable,
+)
 from mdpax.solvers.value_iteration import ValueIteration
 
 
@@ -19,7 +21,7 @@ def test_checkpoint_save_load(tmp_path):
     # Set custom checkpoint directory
     checkpoint_dir = tmp_path / "checkpoints" / "test_checkpoint_save_load"
 
-    problem = DeMoorPerishable()
+    problem = DeMoorSingleProductPerishable()
     solver = ValueIteration(
         problem=problem,
         gamma=0.99,
@@ -48,7 +50,7 @@ def test_checkpoint_resume_to_convergence(tmp_path):
     - vs. stopping, loading checkpoint, then continuing
     - produces identical results
     """
-    problem = DeMoorPerishable()
+    problem = DeMoorSingleProductPerishable()
 
     # First run to convergence normally
     solver1 = ValueIteration(
@@ -86,7 +88,7 @@ def test_checkpoint_resume_to_convergence(tmp_path):
 def test_max_checkpoints_retained(tmp_path):
     """Test that only specified number of checkpoints are kept."""
     checkpoint_dir = tmp_path / "checkpoints" / "test_max_checkpoints_retained"
-    problem = DeMoorPerishable()
+    problem = DeMoorSingleProductPerishable()
     checkpoint_frequency = 100
     max_checkpoints = 3
     solver = ValueIteration(
@@ -114,7 +116,7 @@ def test_custom_checkpoint_config_on_restore(tmp_path):
     """
     # Initial run with original config
 
-    problem = DeMoorPerishable()
+    problem = DeMoorSingleProductPerishable()
     checkpoint_dir = (
         tmp_path / "checkpoints" / "test_custom_checkpoint_config_on_restore"
     )

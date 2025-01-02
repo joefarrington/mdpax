@@ -4,7 +4,9 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from mdpax.problems.mirjalili_perishable_platelet import MirjaliliPerishablePlatelet
+from mdpax.problems.perishable_inventory.mirjalili_platelet import (
+    MirjaliliPlateletPerishable,
+)
 from mdpax.solvers.periodic_value_iteration import PeriodicValueIteration
 
 
@@ -39,7 +41,7 @@ class TestPeriodicValueIterationPolicy:
         # Change working directory to avoid clutter
         os.chdir(tmpdir)
 
-        problem = MirjaliliPerishablePlatelet()
+        problem = MirjaliliPlateletPerishable()
         solver = PeriodicValueIteration(
             problem,
             gamma=0.95,
@@ -51,7 +53,7 @@ class TestPeriodicValueIterationPolicy:
         policy = result.policy.reshape(-1)
 
         # Load in the reported policy
-        reported_policy = pd.read_csv(
+        reported_policy_df = pd.read_csv(
             f"{shared_datadir}/{reported_policy_filename}",
             index_col=0,
             header=0,

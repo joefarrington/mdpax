@@ -24,10 +24,12 @@ from mdpax.utils.types import (
 
 
 @dataclass
-class DeMoorPerishableConfig(ProblemConfig):
+class DeMoorSingleProductPerishableConfig(ProblemConfig):
     """Configuration for the De Moor Perishable problem."""
 
-    _target_: str = "mdpax.problems.de_moor_perishable.DeMoorPerishable"
+    _target_: str = (
+        "mdpax.problems.perishable_inventory.de_moor_single_product.DeMoorSingleProductPerishable"
+    )
     max_demand: int = 100
     demand_gamma_mean: float = 4.0
     demand_gamma_cov: float = 0.5
@@ -41,7 +43,7 @@ class DeMoorPerishableConfig(ProblemConfig):
     issue_policy: str = "lifo"
 
 
-class DeMoorPerishable(Problem):
+class DeMoorSingleProductPerishable(Problem):
     """Perishable inventory MDP problem from De Moor et al. (2022).
 
     Original paper: https://doi.org/10.1016/j.ejor.2021.10.045
@@ -139,7 +141,7 @@ class DeMoorPerishable(Problem):
     @property
     def name(self) -> str:
         """Name of the problem."""
-        return "de_moor_perishable"
+        return "de_moor_single_product"
 
     def _setup_before_space_construction(self):
         """Setup before space construction."""
@@ -304,14 +306,14 @@ class DeMoorPerishable(Problem):
 
         return next_state, reward
 
-    def get_problem_config(self) -> DeMoorPerishableConfig:
+    def get_problem_config(self) -> DeMoorSingleProductPerishableConfig:
         """Get problem configuration for reconstruction.
 
         Returns:
             Configuration containing all parameters needed to reconstruct
             this problem instance
         """
-        return DeMoorPerishableConfig(
+        return DeMoorSingleProductPerishableConfig(
             max_demand=int(self.max_demand),
             demand_gamma_mean=float(self.demand_gamma_mean),
             demand_gamma_cov=float(self.demand_gamma_cov),

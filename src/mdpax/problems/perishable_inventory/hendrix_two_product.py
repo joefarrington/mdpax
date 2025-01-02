@@ -26,11 +26,11 @@ from mdpax.utils.types import (
 
 
 @dataclass
-class HendrixPerishableSubstitutionTwoProductConfig(ProblemConfig):
+class HendrixTwoProductPerishableConfig(ProblemConfig):
     """Configuration for the Hendrix Perishable Substitution Two Product problem."""
 
     _target_: str = (
-        "mdpax.problems.hendrix_perishable_substitution_two_product.HendrixPerishableSubstitutionTwoProduct"
+        "mdpax.problems.perishable_inventory.hendrix_two_product.HendrixTwoProductPerishable"
     )
     max_useful_life: int = 2
     demand_poisson_mean_a: float = 5.0
@@ -44,7 +44,7 @@ class HendrixPerishableSubstitutionTwoProductConfig(ProblemConfig):
     max_order_quantity_b: int = 10
 
 
-class HendrixPerishableSubstitutionTwoProduct(Problem):
+class HendrixTwoProductPerishable(Problem):
     """Two-product perishable inventory MDP problem from Hendrix et al. (2019).
 
     Original paper: https://doi.org/10.1002/cmm4.1027
@@ -138,7 +138,7 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
     @property
     def name(self) -> str:
         """Name of the problem."""
-        return "hendrix_perishable_substitution_two_product"
+        return "hendrix_two_product"
 
     def _setup_before_space_construction(self) -> None:
         """Setup before space construction."""
@@ -360,14 +360,14 @@ class HendrixPerishableSubstitutionTwoProduct(Problem):
         """
         return self._calculate_expected_sales_revenue(state)
 
-    def get_problem_config(self) -> HendrixPerishableSubstitutionTwoProductConfig:
+    def get_problem_config(self) -> HendrixTwoProductPerishableConfig:
         """Get problem configuration for reconstruction.
 
         Returns:
             Configuration containing all parameters needed to reconstruct
             this problem instance
         """
-        return HendrixPerishableSubstitutionTwoProductConfig(
+        return HendrixTwoProductPerishableConfig(
             max_useful_life=self.max_useful_life,
             demand_poisson_mean_a=self.demand_poisson_mean_a,
             demand_poisson_mean_b=self.demand_poisson_mean_b,

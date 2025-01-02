@@ -4,7 +4,9 @@ import jax.numpy as jnp
 import pytest
 import scipy.stats
 
-from mdpax.problems.de_moor_perishable import DeMoorPerishable
+from mdpax.problems.perishable_inventory.de_moor_single_product import (
+    DeMoorSingleProductPerishable,
+)
 
 # Policy on this problem using ValueIteration solver compared to
 # known results in tests/solvers/test_value_iteration.py
@@ -65,7 +67,7 @@ def test_space_construction(params, expected_spaces):
     - Action space size = max_order_quantity + 1
     - Random event space size = max_demand + 1
     """
-    problem = DeMoorPerishable(**params)
+    problem = DeMoorSingleProductPerishable(**params)
 
     assert (
         problem.n_states == expected_spaces["n_states"]
@@ -119,7 +121,7 @@ def test_transition(
     lead_time, state, action, random_event, expected_next_state, expected_reward
 ):
     """Test specific transitions have expected outcomes."""
-    problem = DeMoorPerishable(lead_time=lead_time)
+    problem = DeMoorSingleProductPerishable(lead_time=lead_time)
     next_state, reward = problem.transition(state, action, random_event)
     assert jnp.array_equal(next_state, expected_next_state), "Next state doesn't match"
     assert reward == pytest.approx(expected_reward), "Reward doesn't match"
@@ -163,7 +165,7 @@ def test_random_event_probability(
 ):
     """Test random event probabilities match expected values from gamma distribution."""
 
-    problem = DeMoorPerishable(
+    problem = DeMoorSingleProductPerishable(
         demand_gamma_mean=demand_gamma_mean, demand_gamma_cov=demand_gamma_cov
     )
     prob = problem.random_event_probability(state, action, random_event)
@@ -208,14 +210,14 @@ def test_random_event_probability(
 )
 def test_initial_value(state, expected_value):
     """Test initial value estimates for different states - all zero"""
-    problem = DeMoorPerishable()
+    problem = DeMoorSingleProductPerishable()
     value = problem.initial_value(state)
     assert value == pytest.approx(expected_value, rel=1e-3)
 
 
 def test_fifo_issuing():
     """Test FIFO issuing policy issues oldest stock first."""
-    problem = DeMoorPerishable(issue_policy="fifo")
+    problem = DeMoorSingleProductPerishable(issue_policy="fifo")
     state = jnp.array([2, 1])  # [new_stock, old_stock]
     action = jnp.array([3])  # Order 3 units
     random_event = jnp.array([2])  # demand 2 units
@@ -229,7 +231,7 @@ def test_fifo_issuing():
 
 def test_lifo_issuing():
     """Test LIFO issuing policy issues newest stock first."""
-    problem = DeMoorPerishable(issue_policy="lifo")
+    problem = DeMoorSingleProductPerishable(issue_policy="lifo")
     state = jnp.array([2, 1])  # [new_stock, old_stock]
     action = jnp.array([3])  # Order 3 units
     random_event = jnp.array([2])  # demand 2 units

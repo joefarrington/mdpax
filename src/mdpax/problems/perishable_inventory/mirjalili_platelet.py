@@ -27,11 +27,11 @@ from mdpax.utils.types import (
 
 
 @dataclass
-class MirjaliliPerishablePlateletConfig(ProblemConfig):
+class MirjaliliPlateletPerishableConfig(ProblemConfig):
     """Configuration for the Mirjalili Perishable Platelet problem."""
 
     _target_: str = (
-        "mdpax.problems.mirjalili_perishable_platelet.MirjaliliPerishablePlatelet"
+        "mdpax.problems.perishable_inventory.mirjalili_platelet.MirjaliliPlateletPerishable"
     )
     max_demand: int = 20
     # [M, T, W, T, F, S, S]
@@ -59,7 +59,7 @@ WEEKDAYS = [
 ]
 
 
-class MirjaliliPerishablePlatelet(Problem):
+class MirjaliliPlateletPerishable(Problem):
     """Platelet inventory MDP problem from Mirjalili (2022).
 
     Thesis: https://tspace.library.utoronto.ca/bitstream/1807/124976/1/Mirjalili_Mahdi_202211_PhD_thesis.pdf
@@ -117,7 +117,7 @@ class MirjaliliPerishablePlatelet(Problem):
         wastage_cost: Cost per unit that expires
         holding_cost: Cost per unit held in stock at the end of each period
 
-    Notes:
+    Note:
         - In the original paper, the demand distribution is a truncated negative
           binomial distribution over the number of failured before reaching a specified
           number of successed parameterized by n (target number of successes)
@@ -195,7 +195,7 @@ class MirjaliliPerishablePlatelet(Problem):
     @property
     def name(self) -> str:
         """Name of the problem."""
-        return "mirjalili_perishable_platelet"
+        return "mirjalili_platelet"
 
     def _setup_before_space_construction(self) -> None:
         """Setup before space construction."""
@@ -422,14 +422,14 @@ class MirjaliliPerishablePlatelet(Problem):
 
         return next_state, reward
 
-    def get_problem_config(self) -> MirjaliliPerishablePlateletConfig:
+    def get_problem_config(self) -> MirjaliliPlateletPerishableConfig:
         """Get problem configuration for reconstruction.
 
         Returns:
             Configuration containing all parameters needed to reconstruct
             this problem instance
         """
-        return MirjaliliPerishablePlateletConfig(
+        return MirjaliliPlateletPerishableConfig(
             max_demand=int(self.max_demand),
             weekday_demand_negbin_n=tuple(
                 [float(x) for x in self.weekday_demand_negbin_n]

@@ -7,8 +7,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mdpax.problems.de_moor_perishable import DeMoorPerishable
 from mdpax.problems.forest import Forest
+from mdpax.problems.perishable_inventory.de_moor_single_product import (
+    DeMoorSingleProductPerishable,
+)
 from mdpax.solvers.value_iteration import ValueIteration
 
 jax.config.update("jax_enable_x64", True)
@@ -105,7 +107,7 @@ class TestValueIterationPolicy:
         # Change working directory to avoid clutter
         os.chdir(tmpdir)
 
-        problem = DeMoorPerishable(issue_policy=issuing_policy)
+        problem = DeMoorSingleProductPerishable(issue_policy=issuing_policy)
         solver = ValueIteration(problem, gamma=0.99, epsilon=1e-5, verbose=0)
         result = solver.solve(max_iterations=5000)
         policy = result.policy.reshape(-1)
@@ -162,7 +164,7 @@ class TestValueIterationPolicy:
         reported_policy_filename,
     ):
         """Test policy matches reference policy from viso_jax."""
-        problem = DeMoorPerishable(
+        problem = DeMoorSingleProductPerishable(
             max_useful_life=max_useful_life,
             lead_time=lead_time,
             issue_policy=issue_policy,
