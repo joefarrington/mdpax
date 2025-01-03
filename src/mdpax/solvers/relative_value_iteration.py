@@ -1,7 +1,6 @@
 """Relative value iteration solver for average reward MDPs."""
 
 import chex
-import jax.numpy as jnp
 from hydra.conf import dataclass
 from loguru import logger
 
@@ -78,7 +77,8 @@ class RelativeValueIterationInfo(SolverInfo):
     """Runtime information for relative value iteration.
 
     Attributes:
-        gain: Current gain term for average reward adjustment
+        gain: Current gain term for value function adjustment,
+            converges to average reward per timestep
     """
 
     gain: float
@@ -128,7 +128,7 @@ class RelativeValueIteration(ValueIteration):
         super().__init__(problem=problem, config=config, **kwargs)
         # Get convergence format for logging convergence metrics
         self.convergence_format = get_convergence_format(self.config.epsilon)
-        self.gain = 0.0  # Initialize gain term for average reward
+        self.gain = 0.0
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
         """Run one iteration and compute span for convergence.
@@ -142,17 +142,11 @@ class RelativeValueIteration(ValueIteration):
         new_values, _ = super()._iteration_step()
 
         # Calculate value differences
-        value_diffs = new_values - self.values
-
-        # Update gain using maximum difference
-        max_diff = jnp.max(value_diffs)
-        self.gain = max_diff
-
-        # Subtract gain from new values
         new_values = new_values - self.gain
 
-        # Compute span for convergence check
-        span = max_diff - jnp.min(value_diffs)
+        span = self._get_span(new_values, self.values)
+
+        self.gain = new_values[-1]
 
         return new_values, span
 
@@ -223,7 +217,10 @@ class RelativeValueIteration(ValueIteration):
         return RelativeValueIterationState(
             values=self.values,
             policy=self.policy,
-            info=RelativeValueIterationInfo(iteration=self.iteration, gain=self.gain),
+            info=RelativeValueIterationInfo(
+                iteration=self.iteration,
+                gain=self.gain,
+            ),
         )
 
     def _restore_state_from_checkpoint(

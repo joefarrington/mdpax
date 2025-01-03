@@ -33,6 +33,7 @@ class SolverConfig:
     """
 
     _target_: str = MISSING
+    gamma: float = MISSING
     problem: ProblemConfig = MISSING
     max_batch_size: int = MISSING
     jax_double_precision: bool = MISSING

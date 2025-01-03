@@ -9,11 +9,7 @@ from hydra.conf import dataclass
 from jaxtyping import Array, Float
 
 from mdpax.core.problem import Problem, ProblemConfig
-from mdpax.utils.spaces import (
-    construct_space_from_bounds,
-    space_dimensions_from_bounds,
-    space_with_dimensions_to_index,
-)
+from mdpax.utils.spaces import create_range_space
 from mdpax.utils.types import (
     ActionSpace,
     ActionVector,
@@ -173,10 +169,6 @@ class HendrixTwoProductPerishable(Problem):
             max(self.max_order_quantity_a, self.max_order_quantity_b) + 2
         )
 
-        self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
-        self._random_event_dimensions = space_dimensions_from_bounds(
-            self._random_event_bounds
-        )
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
         self.random_event_component_lookup = (
@@ -223,7 +215,22 @@ class HendrixTwoProductPerishable(Problem):
         Returns:
             Array containing all possible states [n_states, state_dim]
         """
-        return construct_space_from_bounds(self._state_bounds)
+
+        mins = np.zeros(2 * self.max_useful_life, dtype=np.int32)
+        maxs = np.hstack(
+            [
+                np.full(
+                    self.max_useful_life,
+                    self.max_order_quantity_a,
+                ),
+                np.full(
+                    self.max_useful_life,
+                    self.max_order_quantity_b,
+                ),
+            ]
+        )
+        state_space, self._state_to_index_fn = create_range_space(mins, maxs)
+        return state_space
 
     def _construct_action_space(self) -> ActionSpace:
         """Construct action space.
@@ -231,9 +238,10 @@ class HendrixTwoProductPerishable(Problem):
         Returns:
             Array containing all possible actions [n_actions, action_dim]
         """
-        mins = jnp.array([0, 0])
-        maxs = jnp.array([self.max_order_quantity_a, self.max_order_quantity_b])
-        return construct_space_from_bounds((mins, maxs))
+        mins = np.array([0, 0])
+        maxs = np.array([self.max_order_quantity_a, self.max_order_quantity_b])
+        action_space, _ = create_range_space(mins, maxs)
+        return action_space
 
     def _construct_random_event_space(self) -> RandomEventSpace:
         """Construct random event space.
@@ -241,21 +249,10 @@ class HendrixTwoProductPerishable(Problem):
         Returns:
             Array containing all possible random events [n_events, event_dim]
         """
-        return construct_space_from_bounds(self._random_event_bounds)
-
-    @property
-    def _random_event_bounds(
-        self,
-    ) -> tuple[Float[Array, "event_dim"], Float[Array, "event_dim"]]:
-        """Return min and max values for each random event dimension.
-
-        Returns:
-            Tuple of (mins, maxs) where each array has shape [event_dim]
-            and event_dim = 2
-        """
-        mins = jnp.array([0, 0])
-        maxs = jnp.array([self.max_stock_a, self.max_stock_b])
-        return mins, maxs
+        mins = np.array([0, 0])
+        maxs = np.array([self.max_stock_a, self.max_stock_b])
+        random_event_space, self._random_event_to_index = create_range_space(mins, maxs)
+        return random_event_space
 
     def random_event_probability(
         self,
@@ -366,13 +363,7 @@ class HendrixTwoProductPerishable(Problem):
         Returns:
             Integer index of the state in state_space
         """
-        return space_with_dimensions_to_index(state, self._state_dimensions)
-
-    def _random_event_to_index(self, random_event: RandomEventVector) -> int:
-        """Convert random event vector to index."""
-        return space_with_dimensions_to_index(
-            random_event, self._random_event_dimensions
-        )
+        return self._state_to_index_fn(state)
 
     def initial_value(self, state: StateVector) -> float:
         """Initial value estimate based on one-step ahead expected sales revenue.

@@ -2,16 +2,13 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import numpyro.distributions
 from hydra.conf import dataclass
 from jaxtyping import Array, Float
 
 from mdpax.core.problem import Problem, ProblemConfig
-from mdpax.utils.spaces import (
-    construct_space_from_bounds,
-    space_dimensions_from_bounds,
-    space_with_dimensions_to_index,
-)
+from mdpax.utils.spaces import create_range_space
 from mdpax.utils.types import (
     ActionSpace,
     ActionVector,
@@ -177,7 +174,6 @@ class DeMoorSingleProductPerishable(Problem):
             self.demand_gamma_alpha, self.demand_gamma_beta
         )
 
-        self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
         self.random_event_component_lookup = (
@@ -194,7 +190,11 @@ class DeMoorSingleProductPerishable(Problem):
         Returns:
             Array containing all possible states [n_states, state_dim]
         """
-        return construct_space_from_bounds(self._state_bounds)
+        state_dim = self.max_useful_life + self.lead_time - 1
+        mins = np.zeros(state_dim, dtype=np.int32)
+        maxs = np.full(state_dim, self.max_order_quantity)
+        state_space, self._state_to_index_fn = create_range_space(mins, maxs)
+        return state_space
 
     def _construct_action_space(self) -> ActionSpace:
         """Construct action space.
@@ -212,25 +212,6 @@ class DeMoorSingleProductPerishable(Problem):
         """
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
-    @property
-    def _state_bounds(
-        self,
-    ) -> tuple[Float[Array, "state_dim"], Float[Array, "state_dim"]]:
-        """Return min and max values for each state dimension.
-
-        State dimensions are:
-        - First (L-1) dimensions: in-transit orders [0, max_order_quantity]
-        - Next M dimensions: stock at each age [0, max_order_quantity]
-
-        Returns:
-            Tuple of (mins, maxs) where each array has shape [state_dim]
-            and state_dim = lead_time-1 + max_useful_life
-        """
-        state_dim = self.max_useful_life + self.lead_time - 1
-        mins = jnp.zeros(state_dim, dtype=jnp.int32)
-        maxs = jnp.full(state_dim, self.max_order_quantity, dtype=jnp.int32)
-        return mins, maxs
-
     def state_to_index(self, state: StateVector) -> int:
         """Convert state vector to index.
 
@@ -240,7 +221,7 @@ class DeMoorSingleProductPerishable(Problem):
         Returns:
             Integer index of the state in state_space
         """
-        return space_with_dimensions_to_index(state, self._state_dimensions)
+        return self._state_to_index_fn(state)
 
     def random_event_probability(
         self,

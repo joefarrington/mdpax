@@ -10,11 +10,7 @@ from hydra.conf import dataclass
 from jaxtyping import Array, Float
 
 from mdpax.core.problem import Problem, ProblemConfig
-from mdpax.utils.spaces import (
-    construct_space_from_bounds,
-    space_dimensions_from_bounds,
-    space_with_dimensions_to_index,
-)
+from mdpax.utils.spaces import create_range_space
 from mdpax.utils.types import (
     ActionSpace,
     ActionVector,
@@ -222,8 +218,6 @@ class MirjaliliPlateletPerishable(Problem):
         self.weekday_demand_negbin_p = self.weekday_demand_negbin_n / (
             self.weekday_demand_negbin_delta + self.weekday_demand_negbin_n
         )
-
-        self._state_dimensions = space_dimensions_from_bounds(self._state_bounds)
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
         self.random_event_component_lookup = (
@@ -234,38 +228,25 @@ class MirjaliliPlateletPerishable(Problem):
         """Setup after space construction."""
         pass
 
-    @property
-    def _state_bounds(
-        self,
-    ) -> tuple[Float[Array, "state_dim"], Float[Array, "state_dim"]]:
-        """Return min and max values for each state dimension.
-
-        State dimensions are:
-        - First dimension: weekday [0, 6]
-        - Next M dimensions: stock at each age [0, max_order_quantity]
-
-        Returns:
-            Tuple of (mins, maxs) where each array has shape [state_dim]
-            and state_dim = max_useful_life
-        """
-        mins = jnp.zeros(self.max_useful_life, dtype=jnp.int32)
-        maxs = jnp.hstack(
-            [
-                jnp.array([6], dtype=jnp.int32),  # weekday
-                jnp.full(
-                    self.max_useful_life - 1, self.max_order_quantity, dtype=jnp.int32
-                ),  # stock
-            ]
-        )
-        return mins, maxs
-
     def _construct_state_space(self) -> StateSpace:
         """Construct state space.
 
         Returns:
             Array containing all possible states [n_states, state_dim]
         """
-        return construct_space_from_bounds(self._state_bounds)
+
+        mins = np.zeros(self.max_useful_life, dtype=np.int32)
+        maxs = np.hstack(
+            [
+                np.array([6]),  # weekday
+                np.full(
+                    self.max_useful_life - 1,
+                    self.max_order_quantity,
+                ),  # stock
+            ]
+        )
+        state_space, self._state_to_index_fn = create_range_space(mins, maxs)
+        return state_space
 
     def _construct_action_space(self) -> ActionSpace:
         """Construct action space.
@@ -320,7 +301,7 @@ class MirjaliliPlateletPerishable(Problem):
         Returns:
             Integer index of the state in state_space
         """
-        return space_with_dimensions_to_index(state, self._state_dimensions)
+        return self._state_to_index_fn(state)
 
     def random_event_probability(
         self,
