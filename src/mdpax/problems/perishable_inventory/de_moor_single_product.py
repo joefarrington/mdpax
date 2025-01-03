@@ -315,7 +315,9 @@ class DeMoorSingleProductPerishable(Problem):
         """Build mapping from state components to indices."""
         return {
             "in_transit": slice(0, self.lead_time - 1),
-            "stock": slice(self.lead_time - 1, self.max_useful_life),
+            "stock": slice(
+                self.lead_time - 1, self.lead_time - 1 + self.max_useful_life
+            ),
         }
 
     def _construct_action_component_lookup(self) -> dict[str, int | slice]:
