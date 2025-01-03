@@ -53,7 +53,7 @@ class TestValueIterationPolicy:
         """
         # Get matrices from both implementations
         P, R = mdptoolbox.example.forest(**params)
-        vi = mdptoolbox.mdp.ValueIteration(P, R, 0.9)
+        vi = mdptoolbox.mdp.ValueIteration(P, R, 0.9, epsilon=0.01)
         vi.run()
         pymdptoolbox_policy = np.array(vi.policy)
         pymdptoolbox_values = np.array(vi.V)

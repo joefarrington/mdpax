@@ -3,7 +3,6 @@
 from abc import ABC, abstractmethod
 
 import chex
-import jax
 import jax.numpy as jnp
 from hydra.conf import MISSING, dataclass
 from jax import vmap
@@ -228,7 +227,7 @@ class Problem(ABC):
         return 0.0
 
     def build_transition_and_reward_matrices(
-        self, jax_double_precision: bool = True, normalization_tolerance: float = 1e-4
+        self, normalization_tolerance: float = 1e-4
     ) -> tuple[
         Float[Array, "n_actions n_states n_states"], Float[Array, "n_states n_actions"]
     ]:
@@ -245,7 +244,6 @@ class Problem(ABC):
         - R[s,a] is the expected immediate reward for taking action a in state s
 
         Args:
-            jax_double_precision: Whether to use double precision in JAX
             normalization_tolerance: If probabilities sum to within this tolerance of 1,
                 adjust the largest probability to make them sum exactly to 1.
                 Set to 0 to disable this behavior.
@@ -261,14 +259,7 @@ class Problem(ABC):
             impractical for large state spaces and will result in a memory error.
             The main solver implementations use the transition() method directly
             instead.
-
-            JAX double precision is enabled by default, because this method is
-            designed to be used with mdptoolbox, which checks transition matrix
-            probabilities using double precision in NumPy by default.
         """
-        if jax_double_precision:
-            jax.config.update("jax_enable_x64", True)
-
         states: StateSpace = self.state_space  # [S, state_dim]
         actions: ActionSpace = self.action_space  # [A, action_dim]
         random_events: RandomEventSpace = self.random_event_space  # [E, event_dim]

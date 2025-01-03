@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import orbax.checkpoint as checkpoint
 from hydra.utils import instantiate
@@ -16,16 +16,64 @@ from mdpax.core.solver import Solver
 class CheckpointMixin(ABC):
     """Mixin to add checkpointing capabilities to a solver.
 
-    This mixin class provides functionality for saving and restoring solver state during
-    training. It uses Orbax for efficient checkpointing with optional asynchronous saving.
-    Checkpoints include both the solver state and configuration, allowing for complete
-    reconstruction of the solver.
+    Quick Start:
+        - Working with built-in problems? Use restore() to load checkpoints
+        - Working in a notebook with a custom defined problem? Use load_checkpoint()
+        - Not sure? The system will automatically detect which mode to use and log accordingly
 
-    Note:
-        Saving and restoring checkpoints relies on the Problem and Solver each having a config
-        attribute and checkpointing will not be enabled if either does not have a config
-        attribute. All of the example Problems and Solvers have configs but this is not a
-        requirement because, it requires them to be defined in a module that is importable by Hydra.
+    The checkpointing system uses Hydra's structured configs, which are Python dataclasses
+    that contain all information needed to instantiate objects. These configs exist for all
+    example Problems and Solvers in mdpax (see Forest, DeMoorSingleProduct, etc.).
+
+    For custom problems, you have two options:
+
+    1. Full Reconstruction:
+       - Define your problem in a module (not a notebook)
+       - Create a Hydra config class for your problem (see Forest for a simple example)
+       - Allows automatic reconstruction of both problem and solver
+
+    2. Manual Reconstruction:
+       - Use when working in notebooks or without configs
+       - Requires manually reconstructing problem and solver before loading state
+       - More flexible but less automated
+
+    Examples:
+        >>> # Full Reconstruction with built-in problem
+        >>> from mdpax.problems import Forest  # Problem with Hydra config
+        >>> from mdpax.solvers import ValueIteration  # Solver with Hydra config
+        >>>
+        >>> problem = Forest(S=4)
+        >>> solver = ValueIteration(
+        ...     problem=problem,
+        ...     checkpoint_dir="checkpoints/run1",
+        ...     checkpoint_frequency=5
+        ... )
+        >>> solver.solve(max_iterations=100)
+        >>>
+        >>> # Later, full reconstruction:
+        >>> solver = ValueIteration.restore("checkpoints/run1")  # Recreates everything
+
+        >>> # Manual Reconstruction (e.g., custom problem in notebook)
+        >>> class MyProblem:  # Custom problem without config
+        ...     def __init__(self, size):
+        ...         self.size = size
+        ...
+        >>> problem = MyProblem(size=4)
+        >>> solver = ValueIteration(
+        ...     problem=problem,
+        ...     checkpoint_dir="checkpoints/run1",
+        ...     checkpoint_frequency=5
+        ... )
+        >>> solver.solve(max_iterations=100)
+        >>>
+        >>> # Later, manual reconstruction:
+        >>> problem = MyProblem(size=4)  # Must recreate problem
+        >>> solver = ValueIteration(
+        ...     problem=problem,
+        ...     checkpoint_dir="checkpoints/run2",  # New save location
+        ... )
+        >>> solver.load_checkpoint("checkpoints/run1")  # Load from original location
+        >>> solver.solve(max_iterations=50)  # New checkpoints go to run2
 
     Attributes:
         checkpoint_dir (Path): Directory where checkpoints are stored.
@@ -37,29 +85,18 @@ class CheckpointMixin(ABC):
     Required Protected Methods:
         _restore_state_from_checkpoint(state: Dict[str, Any]) -> None:
             Restore solver state from a checkpoint state dictionary.
-        _get_solver_config() -> Dict[str, Any]:
-            Get solver configuration for reconstruction.
 
     Public Interface:
-        setup_checkpointing(): Configure checkpointing behavior
-        save(step: int): Save current state
-        restore(checkpoint_dir: str | Path, step: Optional[int] = None) -> Solver:
-            Restore solver from checkpoint
-
-    Example:
-        >>> solver = MySolver(problem,
-        ...     checkpoint_dir="checkpoints/my_problem",
-        ...     checkpoint_frequency=100,
-        ...     enable_async_checkpointing=True
-        ... )
-        >>> # During training, solver.save(step=iteration) is called periodically
-        >>> # Later, restore the solver
-        >>> solver = MySolver.restore("checkpoint/my_problem")
+        setup_checkpointing: Configure checkpointing behavior
+        save: Save current state
+        restore: Classmethod to restore solver from checkpoint
+        load_checkpoint: Load solver state from checkpoint into
+            an already constructed Solver instance
     """
 
     def setup_checkpointing(
         self,
-        checkpoint_dir: Optional[Union[str, Path]] = None,
+        checkpoint_dir: str | Path | None = None,
         checkpoint_frequency: int = 0,
         max_checkpoints: int = 1,
         enable_async_checkpointing: bool = True,
@@ -85,24 +122,6 @@ class CheckpointMixin(ABC):
         if max_checkpoints < 0:
             raise ValueError("max_checkpoints must be non-negative")
 
-        # Ensure both problem and solver have config attributes
-        if not hasattr(self.problem, "config"):
-            logger.warning(
-                "Problem does not have a config attribute. "
-                "Checkpointing requires a config for complete state restoration. "
-                "Disabling checkpointing."
-            )
-            self.checkpoint_frequency = 0
-            return
-        elif not hasattr(self, "config"):
-            logger.warning(
-                "Solver does not have a config attribute. "
-                "Checkpointing requires a config for complete state restoration. "
-                "Disabling checkpointing."
-            )
-            self.checkpoint_frequency = 0
-            return
-
         # Store basic settings
         self.checkpoint_frequency = checkpoint_frequency
         self.max_checkpoints = max_checkpoints
@@ -110,7 +129,7 @@ class CheckpointMixin(ABC):
         self.checkpoint_manager = None
 
         # Early return if checkpointing not requested
-        if checkpoint_frequency == 0:
+        if self.checkpoint_frequency == 0:
             logger.info("Checkpointing not enabled")
             return
 
@@ -123,12 +142,23 @@ class CheckpointMixin(ABC):
                 f"checkpoints/{self.problem.name}/{current_datetime}/"
             )
         self.checkpoint_dir = Path(checkpoint_dir).absolute()
-
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         # Create checkpoint manager and save config
         self.checkpoint_manager = self._create_checkpoint_manager(
             self.checkpoint_dir, max_checkpoints, enable_async_checkpointing
         )
-        OmegaConf.save(self.config, self.checkpoint_dir / "config.yaml")
+
+        if self.has_full_config:
+            self._save_solver_config()
+            logger.info(
+                "Full checkpointing enabled with problem and solver reconstruction"
+            )
+        else:
+            logger.info(
+                "Lightweight checkpointing enabled - problem and solver must be "
+                "reconstructed manually"
+            )
+
         logger.info(
             f"Saving checkpoints every {self.checkpoint_frequency} "
             f"iteration(s) to {self.checkpoint_dir}"
@@ -147,10 +177,63 @@ class CheckpointMixin(ABC):
             and hasattr(self, "checkpoint_manager")
         )
 
+    @property
+    def has_full_config(self) -> bool:
+        """Check if solver and problem have complete configs for reconstruction.
+
+        Checks that both solver and problem have configs with _target_ properties,
+        which are required for Hydra to reconstruct the objects.
+
+        Returns:
+            True if both solver and problem have complete configs, False otherwise.
+        """
+        return (
+            hasattr(self.problem, "config")
+            and self.problem.config is not None
+            and hasattr(self, "config")
+            and self.config is not None
+            and hasattr(self.problem.config, "_target_")
+            and self.problem.config._target_ is not None
+            and hasattr(self.config, "_target_")
+            and self.config._target_ is not None
+        )
+
+    def load_checkpoint(self, checkpoint_dir: str | Path) -> None:
+        """Load solver state from checkpoint.
+
+        Must be called on an already constructed solver instance with problem.
+        Will load state from checkpoint_dir, but continue saving new checkpoints
+        to the directory specified during construction (self.checkpoint_dir).
+
+        Args:
+            checkpoint_dir: Directory containing checkpoint to load from
+        """
+        load_manager = self._create_checkpoint_manager(
+            checkpoint_dir=checkpoint_dir,
+            max_checkpoints=1,  # Only need to keep one when loading
+            enable_async_checkpointing=True,
+        )
+
+        template_cp_state = self.solver_state
+        step = load_manager.latest_step()
+        if step is None:
+            raise ValueError(f"No checkpoints found in {checkpoint_dir}")
+
+        cp_state = load_manager.restore(
+            step,
+            args=checkpoint.args.StandardRestore(template_cp_state),
+        )
+
+        self._restore_state_from_checkpoint(cp_state)
+
+    def _save_solver_config(self) -> None:
+        """Save the solver config to the checkpoint directory."""
+        OmegaConf.save(self.config, self.checkpoint_dir / "config.yaml")
+
     @classmethod
     def _create_checkpoint_manager(
         cls,
-        checkpoint_dir: Union[str, Path],
+        checkpoint_dir: str | Path,
         max_checkpoints: int,
         enable_async_checkpointing: bool,
     ) -> checkpoint.CheckpointManager:
@@ -210,11 +293,11 @@ class CheckpointMixin(ABC):
     def restore(
         cls,
         checkpoint_dir: str | Path,
-        step: Optional[int] = None,
-        new_checkpoint_dir: Optional[str | Path] = None,
-        checkpoint_frequency: Optional[int] = None,
-        max_checkpoints: Optional[int] = None,
-        enable_async_checkpointing: Optional[bool] = None,
+        step: int | None = None,
+        new_checkpoint_dir: str | Path | None = None,
+        checkpoint_frequency: int | None = None,
+        max_checkpoints: int | None = None,
+        enable_async_checkpointing: bool | None = None,
     ) -> Solver:
         """Load solver from checkpoint.
 
@@ -236,12 +319,25 @@ class CheckpointMixin(ABC):
 
         Raises:
             ValueError: If no checkpoints are found in the directory.
+            FileNotFoundError: If no config file is found, suggesting to use load_checkpoint
+                for problems without configs.
         """
         # Initialize checkpoint manager
         checkpoint_dir = Path(checkpoint_dir).absolute()
+        config_path = checkpoint_dir / "config.yaml"
+
+        if not config_path.exists():
+            raise FileNotFoundError(
+                f"No config file found in {checkpoint_dir}. "
+                "If you're working with a problem without configs (e.g., in a notebook), "
+                "you need to:\n"
+                "1. Create your problem instance\n"
+                "2. Create your solver instance with that problem\n"
+                "3. Use solver.load_checkpoint() instead of the class restore() method"
+            )
 
         # Create solver instance with nested problem
-        config = OmegaConf.load(checkpoint_dir / "config.yaml")
+        config = OmegaConf.load(config_path)
 
         # Update config with new values (only allow new values if provided)
         if new_checkpoint_dir is not None:
@@ -279,7 +375,7 @@ class CheckpointMixin(ABC):
         return solver
 
     @abstractmethod
-    def _restore_state_from_checkpoint(self, state: Dict[str, Any]) -> None:
+    def _restore_state_from_checkpoint(self, state: dict[str, Any]) -> None:
         """Restore solver state from checkpoint.
 
         Args:

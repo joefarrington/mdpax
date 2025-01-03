@@ -9,17 +9,17 @@ from mdpax.problems.perishable_inventory.de_moor_single_product import (
 from mdpax.solvers.value_iteration import ValueIteration
 
 
-def test_checkpoint_save_load(tmp_path):
-    """Test that loading checkpoint restores exact state.
+def test_checkpoint_save_restore(tmp_path):
+    """Test that restoring checkpoint restores exact state.
 
     Verifies that:
-    - Values and iteration count match after loading
-    - Policy matches after loading
+    - Values and iteration count match after restoration
+    - Policy matches after restoration
     - Custom checkpoint directory is used
     """
 
     # Set custom checkpoint directory
-    checkpoint_dir = tmp_path / "checkpoints" / "test_checkpoint_save_load"
+    checkpoint_dir = tmp_path / "checkpoints" / "test_checkpoint_save_restore"
 
     problem = DeMoorSingleProductPerishable()
     solver = ValueIteration(
@@ -43,8 +43,58 @@ def test_checkpoint_save_load(tmp_path):
     assert new_solver.values == pytest.approx(values_before)
 
 
+def test_lightweight_checkpoint_save_load(tmp_path):
+    """Test that loading lightweight checkpoint restores exact state.
+
+    Verifies that:
+    - Values and iteration count match after loading
+    - Policy matches after loading
+    - Custom checkpoint directory is used
+    - Works with problems without configs
+    """
+
+    # Set custom checkpoint directory
+    checkpoint_dir_first = tmp_path / "checkpoints" / "test_lightweight_save_load_1"
+
+    problem = DeMoorSingleProductPerishable()
+    problem.config = None  # Remove config to force lightweight checkpointing
+    solver = ValueIteration(
+        problem=problem,
+        gamma=0.99,
+        epsilon=1e-4,
+        checkpoint_dir=checkpoint_dir_first,
+        checkpoint_frequency=5,
+        verbose=0,
+    )
+
+    # Run for a few iterations
+    solver.solve(max_iterations=20)
+    values_before = solver.values.copy()
+    iter_before = solver.iteration
+
+    checkpoint_dir_second = tmp_path / "checkpoints" / "test_lightweight_save_load_2"
+
+    # Create new problem and solver instances
+    new_problem = DeMoorSingleProductPerishable()
+    new_problem.config = None  # Remove config
+    new_solver = ValueIteration(
+        problem=new_problem,
+        gamma=0.99,
+        epsilon=1e-4,
+        checkpoint_dir=checkpoint_dir_second,
+        verbose=0,
+    )
+
+    # Load checkpoint
+    new_solver.load_checkpoint(checkpoint_dir_first)
+
+    # Check state matches
+    assert new_solver.iteration == iter_before
+    assert new_solver.values == pytest.approx(values_before)
+
+
 def test_checkpoint_resume_to_convergence(tmp_path):
-    """Test that resuming from checkpoint converges to same result.
+    """Test that resuming from restored checkpoint converges to same result.
 
     Verifies that:
     - Running to convergence in one go
@@ -81,6 +131,71 @@ def test_checkpoint_resume_to_convergence(tmp_path):
 
     # Create new solver and resume
     solver3 = ValueIteration.restore(checkpoint_dir)
+    solver3.solve(max_iterations=2000)
+
+    # Check final results match
+    assert solver3.values == pytest.approx(final_values)
+    assert jnp.array_equal(solver3.policy, final_policy)
+
+
+def test_lightweight_checkpoint_resume_to_convergence(tmp_path):
+    """Test that resuming from lightweight checkpoint converges to same result.
+
+    Tests manual reconstruction workflow by:
+    1. Creating a problem and removing its config
+    2. Running solver and saving checkpoints
+    3. Creating new problem instance (without config)
+    4. Loading checkpoint state into new solver
+    5. Verifying results match original run
+    """
+    problem = DeMoorSingleProductPerishable()
+    # Remove config to force lightweight checkpointing
+    problem.config = None
+
+    # First run to convergence normally
+    solver1 = ValueIteration(
+        problem=problem,
+        gamma=0.99,
+        epsilon=1e-4,
+        checkpoint_frequency=0,
+        verbose=0,
+    )
+    solver1.solve(max_iterations=2000)
+    final_values = solver1.values.copy()
+    final_policy = solver1.policy.copy()
+
+    # Now run with interruption
+    checkpoint_dir_first = (
+        tmp_path / "checkpoints" / "test_lightweight_checkpoint_resume_1"
+    )
+    solver2 = ValueIteration(
+        problem=problem,
+        gamma=0.99,
+        epsilon=1e-4,
+        checkpoint_dir=checkpoint_dir_first,
+        checkpoint_frequency=100,
+        verbose=0,
+    )
+
+    # Run for a few iterations
+    solver2.solve(max_iterations=200)
+
+    checkpoint_dir_second = (
+        tmp_path / "checkpoints" / "test_lightweight_checkpoint_resume_2"
+    )
+    # Create new problem and solver instances
+    new_problem = DeMoorSingleProductPerishable()
+    new_problem.config = None  # Remove config again
+    solver3 = ValueIteration(
+        problem=new_problem,
+        gamma=0.99,
+        epsilon=1e-4,
+        checkpoint_dir=checkpoint_dir_second,
+        verbose=0,
+    )
+
+    # Load checkpoint and continue
+    solver3.load_checkpoint(checkpoint_dir_first)
     solver3.solve(max_iterations=2000)
 
     # Check final results match
