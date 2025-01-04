@@ -77,17 +77,28 @@ class Solver(ABC):
     """Abstract base class for MDP solvers.
 
     Provides common functionality for solving MDPs using parallel processing
-    across devices with batched state updates.
+    across devices with batched state updates. Subclasses must implement
+    the core solution algorithm while inheriting the parallel processing
+    and batching infrastructure.
+
+    Required Implementations:
+        _setup_solver() -> None:
+            Setup solver-specific data structures and functions.
+            Called after base initialization.
+
+        _iteration_step() -> tuple[ValueFunction, float]:
+            Perform one iteration of the solution algorithm.
+            Returns (new_values, convergence_measure).
+
+    Optional Implementations:
+        _initialize_values(batched_states: BatchedStates) -> ValueFunction:
+            Initialize value function. Default uses problem's initial_value.
 
     Shape Requirements:
-        Values and policies maintain consistent dimensionality:
         - Values: [n_states]
         - Policy: [n_states, action_dim]
         - Batched states: [n_devices, n_batches, batch_size, state_dim]
-
-    Note:
-        All array operations use JAX for efficient parallel processing.
-        States are automatically batched and padded for device distribution.
+        - Batched results: [n_devices, n_batches, batch_size]
 
     Args:
         problem: MDP problem to solve
@@ -96,6 +107,26 @@ class Solver(ABC):
         max_batch_size: Maximum states to process in parallel on each device
         jax_double_precision: Whether to use float64 precision
         verbose: Logging verbosity level (0-4)
+
+    Attributes:
+        problem: Problem instance being solved
+        gamma: Discount factor
+        epsilon: Convergence threshold
+        max_batch_size: Maximum batch size for parallel processing
+        values: Current value function [n_states] or None
+        policy: Current policy [n_states, action_dim] or None
+        iteration: Current iteration count
+        batch_processor: Utility for handling batched computations
+        verbose: Current verbosity level
+        solver_state: Current solver state containing values, policy, and info
+        n_devices: Number of available JAX devices for parallel processing
+        batch_size: Actual batch size being used (may be less than max_batch_size)
+        n_pad: Number of padding elements added to make batches fit devices
+
+    Note:
+        - All array operations use JAX for efficient parallel processing
+        - States are automatically batched and padded for device distribution
+        - Subclasses should use jax.jit and jax.pmap for performance
     """
 
     def __init__(
@@ -142,11 +173,11 @@ class Solver(ABC):
                   ('ERROR', 'WARNING', 'INFO', 'DEBUG', 'TRACE')
 
         Integer levels map to:
-            0: Minimal output (only errors)
-            1: Show warnings and errors
-            2: Show main progress (default)
-            3: Show detailed progress
-            4: Show everything
+            - 0: Minimal output (only errors)
+            - 1: Show warnings and errors
+            - 2: Show main progress (default)
+            - 3: Show detailed progress
+            - 4: Show everything
         """
         # Handle string input
         if isinstance(level, str):
@@ -237,10 +268,11 @@ class Solver(ABC):
 
     @abstractmethod
     def _iteration_step(self) -> tuple[ValueFunction, float]:
-        """Perform one iteration step.
+        """Perform one iteration of the solution algorithm.
 
         Returns:
-            Tuple of (new values, convergence measure)
+            Tuple of (new values, convergence measure) where new values has shape
+            [n_states]
         """
         pass
 
@@ -251,7 +283,8 @@ class Solver(ABC):
             max_iterations: Maximum number of iterations to run
 
         Returns:
-            SolverState containing final values, policy, and solver info
+            SolverState containing final values [n_states], optimal policy [n_states, action_dim],
+            and SolverInfo including iteration count
         """
         for _ in range(max_iterations):
             new_values, conv = self._iteration_step()

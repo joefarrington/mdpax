@@ -36,14 +36,15 @@ class ValueIterationConfig(SolverConfig):
         problem: Optional problem configuration. If not provided, can pass a Problem
             instance directly to the solver. If a Problem instance with a config is
             provided to the solver, its config will be extracted and stored here.
+            Must be a ProblemConfig if provided.
         gamma: Discount factor in [0,1]
-        epsilon: Convergence threshold for value changes
-        max_batch_size: Maximum states to process in parallel on each device
+        epsilon: Convergence threshold for value changes (must be positive)
+        max_batch_size: Maximum states to process in parallel on each device (must be positive)
         jax_double_precision: Whether to use float64 precision
-        verbose: Logging verbosity level (0-4)
+        verbose: Logging verbosity level (must be 0-4)
         checkpoint_dir: Directory to store checkpoints
-        checkpoint_frequency: How often to save checkpoints (0 to disable)
-        max_checkpoints: Maximum number of checkpoints to keep
+        checkpoint_frequency: How often to save checkpoints (must be non-negative, 0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep (must be non-negative)
         enable_async_checkpointing: Whether to save checkpoints asynchronously
 
     Example:
@@ -75,7 +76,7 @@ class ValueIterationConfig(SolverConfig):
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
-        if self.problem is not None and not isinstance(ProblemConfig):
+        if self.problem is not None and not isinstance(self.problem, ProblemConfig):
             raise TypeError("problem must be a ProblemConfig if provided")
         if not 0 <= self.gamma <= 1:
             raise ValueError("gamma must be between 0 and 1")
@@ -87,6 +88,8 @@ class ValueIterationConfig(SolverConfig):
             raise ValueError("checkpoint_frequency must be non-negative")
         if self.max_checkpoints < 0:
             raise ValueError("max_checkpoints must be non-negative")
+        if not 0 <= self.verbose <= 4:
+            raise ValueError("verbose must be between 0 and 4")
 
 
 class ValueIteration(Solver, CheckpointMixin):
@@ -96,12 +99,11 @@ class ValueIteration(Solver, CheckpointMixin):
     across devices. States are automatically batched and padded for efficient
     parallel processing.
 
-    Notes:
-        Supports checkpointing for long-running problems.
+    Convergence testing follows pymdptoolbox, testing the span of differences
+    in values instead of the maximum absolute difference. The convergence
+    threshold is adjusted for the discount factor gamma.
 
-        Convergence test follows mdptoolbox instead of viso_jax,
-        using the span of differences in values instead of maximum
-        absolute difference.
+    Supports checkpointing for long-running problems using the CheckpointMixin.
 
     Args:
         problem: Problem instance or None if using config
@@ -153,12 +155,22 @@ class ValueIteration(Solver, CheckpointMixin):
         self.policy = None
 
     def _setup_solver(self) -> None:
-        """Setup solver-specific computations."""
-        # Cache problem methods at the start
+        """Setup solver-specific data structures and functions.
 
-        # Convergence threshold for span of differences in values
-        # as in mdptoolbox
-        # https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/mdp.py
+        Sets up:
+            - Convergence threshold based on gamma and epsilon
+            - Convergence logging format
+            - Pmapped functions for parallel value updates and policy extraction
+
+        The convergence threshold is computed as:
+            - epsilon if gamma == 1
+            - epsilon * (1 - gamma) / gamma otherwise
+        following mdptoolbox's implementation.
+
+        Returns:
+            None
+        """
+
         self._thresh = (
             self.epsilon
             if self.gamma == 1
@@ -293,7 +305,7 @@ class ValueIteration(Solver, CheckpointMixin):
                 Shape: [n_devices, n_batches, batch_size, state_dim]
 
         Returns:
-            Updated values for all states [n_devices, n_batches, batch_size]
+            Array of updated values for all states [n_devices, n_batches, batch_size]
         """
         _, new_values_padded = jax.lax.scan(
             self._calculate_updated_value_state_batch,
@@ -366,7 +378,7 @@ class ValueIteration(Solver, CheckpointMixin):
                 Shape: [n_devices, n_batches, batch_size, state_dim]
 
         Returns:
-            Updated values for all states [n_devices, n_batches, batch_size]
+            Array of updated values for all states [n_devices, n_batches, batch_size]
         """
         _, best_action_idxs_padded = jax.lax.scan(
             self._extract_policy_idx_state_batch,
@@ -376,12 +388,11 @@ class ValueIteration(Solver, CheckpointMixin):
         return best_action_idxs_padded
 
     def _iteration_step(self) -> tuple[Float[Array, "n_states"], float]:
-        """Perform one iteration step.
+        """Perform one iteration of the solution algorithm.
 
         Returns:
-            Tuple of (new_values, convergence_measure) where:
-                - new_values are the updated state values [n_states]
-                - convergence_measure is max absolute change in values
+            Tuple of (new values, convergence measure) where new values has shape
+            [n_states]
         """
         new_values = self._update_values(
             self.batched_states,
@@ -401,7 +412,19 @@ class ValueIteration(Solver, CheckpointMixin):
     def _get_span(
         self, new_values: Float[Array, "n_states"], old_values: Float[Array, "n_states"]
     ) -> float:
-        """Get the span of differences in values."""
+        """Get the span of differences in values.
+
+        The span is defined as max(delta) - min(delta) where delta is the
+        difference between new and old values. This is used as the convergence
+        measure following pymdptoolbox's implementation.
+
+        Args:
+            new_values: Updated value function [n_states]
+            old_values: Previous value function [n_states]
+
+        Returns:
+            Span (max - min) of value differences
+        """
         delta = new_values - old_values
         return jnp.max(delta) - jnp.min(delta)
 
@@ -413,14 +436,32 @@ class ValueIteration(Solver, CheckpointMixin):
         gamma: float,
         values: Float[Array, "n_states"],
     ) -> Float[Array, "n_states"]:
-        """Update values for a batch of states."""
+        """Update values for a batch of states using parallel processing.
+
+        Computes new values by:
+        1. Calculating updated values for each state-action-event combination
+        2. Processing states in parallel across devices using pmap
+        3. Unbatching and removing padding from results
+
+        Args:
+            batched_states: Batched state vectors [n_devices, n_batches, batch_size, state_dim]
+            actions: Action space [n_actions, action_dim]
+            random_events: Random event space [n_events, event_dim]
+            gamma: Discount factor
+            values: Current value function [n_states]
+
+        Returns:
+            Array of updated values [n_states]
+        """
         padded_batched_values = self._calculate_updated_value_scan_state_batches_pmap(
             (actions, random_events, gamma, values), batched_states
         )
         new_values = self._unbatch_results(padded_batched_values)
         return new_values
 
-    def _extract_policy(self) -> Float[Array, "n_states action_dim"]:
+    def _extract_policy(
+        self,
+    ) -> Float[Array, "n_states action_dim"]:
         """Extract the optimal policy from the current value function.
 
         Returns:
@@ -439,20 +480,14 @@ class ValueIteration(Solver, CheckpointMixin):
         return jnp.take(self.problem.action_space, policy_idxs, axis=0)
 
     def solve(self, max_iterations: int = 2000) -> SolverState:
-        """Run value iteration.
-
-        Performs synchronous value iteration updates until either:
-        1. The maximum change in values is below epsilon
-        2. The maximum number of iterations is reached
+        """Run solver to convergence or max iterations.
 
         Args:
             max_iterations: Maximum number of iterations to run
 
         Returns:
-            SolverState containing:
-                - Final values [n_states]
-                - Optimal policy [n_states, action_dim]
-                - Solver info including iteration count
+            SolverState containing final values [n_states], optimal policy [n_states, action_dim],
+            and SolverInfo including iteration count
         """
         for _ in range(max_iterations):
             self.iteration += 1
@@ -495,12 +530,3 @@ class ValueIteration(Solver, CheckpointMixin):
         self.values = solver_state.values
         self.policy = solver_state.policy
         self.iteration = solver_state.info.iteration
-
-    def _get_solver_config(self) -> ValueIterationConfig:
-        """Get solver configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this solver instance
-        """
-        return self.config
