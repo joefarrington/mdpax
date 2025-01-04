@@ -299,7 +299,7 @@ class HendrixTwoProductPerishable(Problem):
             random_event: Random event vector [event_dim]
 
         Returns:
-            A tuple containing the next state vector [state_dim] and
+            Tuple containing the next state vector [state_dim] and
             the immediate reward
         """
         issued_a = random_event[self.random_event_component_lookup["issued_a"]]
@@ -405,7 +405,7 @@ class HendrixTwoProductPerishable(Problem):
             stock_element: Available stock of current age
 
         Returns:
-            A tuple containing the remaining demand and remaining stock
+            Tuple containing the remaining demand and remaining stock
             after processing this age category
         """
         remaining_stock = (stock_element - remaining_demand).clip(0)

@@ -25,7 +25,7 @@ class CheckpointMixin(ABC):
     that contain all information needed to instantiate objects. These configs exist for all
     example Problems and Solvers in mdpax (see Forest, DeMoorSingleProduct, etc.).
 
-    For custom problems, you have two options:
+    For custom problems, there are two options:
 
     1. Full Reconstruction:
        - Define your problem in a module (not a notebook)
@@ -36,6 +36,17 @@ class CheckpointMixin(ABC):
        - Use when working in notebooks or without configs
        - Requires manually reconstructing problem and solver before loading state
        - More flexible but less automated
+
+    Required Implementation:
+        _restore_state_from_checkpoint(state: Dict[str, Any]) -> None:
+            Restore solver state from a checkpoint state dictionary.
+
+    Attributes:
+        checkpoint_dir (Path): Directory where checkpoints are stored.
+        checkpoint_frequency (int): Number of iterations between checkpoints, 0 to disable.
+        max_checkpoints (int): Maximum number of checkpoints to retain.
+        enable_async_checkpointing (bool): Whether async checkpointing is enabled.
+        checkpoint_manager (checkpoint.CheckpointManager): Orbax checkpoint manager instance.
 
     Examples:
         >>> # Full Reconstruction with built-in problem
@@ -74,27 +85,9 @@ class CheckpointMixin(ABC):
         ... )
         >>> solver.load_checkpoint("checkpoints/run1")  # Load from original location
         >>> solver.solve(max_iterations=50)  # New checkpoints go to run2
-
-    Attributes:
-        checkpoint_dir (Path): Directory where checkpoints are stored.
-        checkpoint_frequency (int): Number of iterations between checkpoints, 0 to disable.
-        max_checkpoints (int): Maximum number of checkpoints to retain.
-        enable_async_checkpointing (bool): Whether async checkpointing is enabled.
-        checkpoint_manager (checkpoint.CheckpointManager): Orbax checkpoint manager instance.
-
-    Required Protected Methods:
-        _restore_state_from_checkpoint(state: Dict[str, Any]) -> None:
-            Restore solver state from a checkpoint state dictionary.
-
-    Public Interface:
-        setup_checkpointing: Configure checkpointing behavior
-        save: Save current state
-        restore: Classmethod to restore solver from checkpoint
-        load_checkpoint: Load solver state from checkpoint into
-            an already constructed Solver instance
     """
 
-    def setup_checkpointing(
+    def _setup_checkpointing(
         self,
         checkpoint_dir: str | Path | None = None,
         checkpoint_frequency: int = 0,
@@ -112,9 +105,6 @@ class CheckpointMixin(ABC):
                 checkpoints are automatically removed.
             enable_async_checkpointing: Whether to use asynchronous checkpointing
                 for better performance.
-
-        Raises:
-            ValueError: If checkpoint_frequency or max_checkpoints is negative.
         """
         # Validation
         if checkpoint_frequency < 0:
@@ -198,7 +188,9 @@ class CheckpointMixin(ABC):
             and self.config._target_ is not None
         )
 
-    def load_checkpoint(self, checkpoint_dir: str | Path) -> None:
+    def load_checkpoint(
+        self, checkpoint_dir: str | Path, step: int | None = None
+    ) -> None:
         """Load solver state from checkpoint.
 
         Must be called on an already constructed solver instance with problem.
@@ -207,7 +199,11 @@ class CheckpointMixin(ABC):
 
         Args:
             checkpoint_dir: Directory containing checkpoint to load from
+            step: Specific step to load. If None, loads the latest checkpoint.
+        Returns:
+            None
         """
+        checkpoint_dir = Path(checkpoint_dir).absolute()
         load_manager = self._create_checkpoint_manager(
             checkpoint_dir=checkpoint_dir,
             max_checkpoints=1,  # Only need to keep one when loading
@@ -215,7 +211,7 @@ class CheckpointMixin(ABC):
         )
 
         template_cp_state = self.solver_state
-        step = load_manager.latest_step()
+        step = step or load_manager.latest_step()
         if step is None:
             raise ValueError(f"No checkpoints found in {checkpoint_dir}")
 
@@ -276,6 +272,9 @@ class CheckpointMixin(ABC):
 
         Args:
             step: Current iteration/step number to associate with the checkpoint.
+
+        Returns:
+            None
         """
         if not self.is_checkpointing_enabled:
             return
@@ -316,11 +315,6 @@ class CheckpointMixin(ABC):
 
         Returns:
             Reconstructed solver instance with restored state.
-
-        Raises:
-            ValueError: If no checkpoints are found in the directory.
-            FileNotFoundError: If no config file is found, suggesting to use load_checkpoint
-                for problems without configs.
         """
         # Initialize checkpoint manager
         checkpoint_dir = Path(checkpoint_dir).absolute()

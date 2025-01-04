@@ -226,7 +226,7 @@ class Problem(ABC):
             random_event: Random event vector [event_dim]
 
         Returns:
-            A tuple containing the next state vector [state_dim] and
+            Tuple containing the next state vector [state_dim] and
             the immediate reward
 
         Note:
@@ -275,7 +275,7 @@ class Problem(ABC):
                 Set to 0 to disable this behavior.
 
         Returns:
-            A tuple containing the transition probability matrix
+            Tuple containing the transition probability matrix
             [n_actions, n_states, n_states] and the
             expected reward matrix [n_states, n_actions]
 

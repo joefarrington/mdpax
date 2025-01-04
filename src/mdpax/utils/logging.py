@@ -1,4 +1,4 @@
-"""Logging utilities for mdpax."""
+"""Logging utilities."""
 
 from typing import Literal
 
@@ -25,10 +25,6 @@ def verbosity_to_loguru_level(verbose: int) -> LoguruLevel:
     Returns:
         The corresponding loguru log level.
 
-    Raises:
-        TypeError: If verbose is not an integer.
-        ValueError: If verbose is not between 0 and 4.
-
     Example:
         >>> level = verbosity_to_loguru_level(2)
         >>> print(level)
@@ -49,7 +45,7 @@ def verbosity_to_loguru_level(verbose: int) -> LoguruLevel:
 
 
 def get_convergence_format(epsilon: float, max_decimals: int = 10) -> str:
-    """Get format string with enough decimal places to show changes above epsilon.
+    """Get format string to show changes above epsilon.
 
     Creates a format string (e.g. '.4f') that ensures logged values will show
     meaningful changes until convergence is reached. This is useful for logging

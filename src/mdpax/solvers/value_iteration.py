@@ -146,7 +146,7 @@ class ValueIteration(Solver, CheckpointMixin):
             self.config.jax_double_precision,
             self.config.verbose,
         )
-        self.setup_checkpointing(
+        self._setup_checkpointing(
             self.config.checkpoint_dir,
             self.config.checkpoint_frequency,
             max_checkpoints=self.config.max_checkpoints,

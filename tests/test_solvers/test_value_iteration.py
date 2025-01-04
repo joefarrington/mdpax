@@ -33,7 +33,7 @@ jax.config.update("jax_enable_x64", True)
         ),
     ],
 )
-def test_forest_matches_pymdptoolbox(self, params):
+def test_forest_matches_pymdptoolbox(params):
     """Test policy matches pymdptoolbox implementation.
 
     Verifies that our implementation produces the same policies and values as
@@ -87,7 +87,7 @@ def test_forest_matches_pymdptoolbox(self, params):
     ],
 )
 def test_de_moor_matches_paper(
-    self, tmpdir, shared_datadir, issuing_policy, reported_policy_filename
+    tmpdir, shared_datadir, issuing_policy, reported_policy_filename
 ):
     """Test policy matches results from original paper.
 
@@ -147,7 +147,6 @@ def test_de_moor_matches_paper(
     ],
 )
 def test_de_moor_matches_viso_jax_reference_policy(
-    self,
     shared_datadir,
     max_useful_life,
     lead_time,

@@ -102,7 +102,8 @@ class BatchProcessor:
             states: Array of states with shape [n_states, state_dim].
 
         Returns:
-            Batched and padded states with shape [n_devices, n_batches, batch_size, state_dim].
+            Array of batched and padded states with shape
+            [n_devices, n_batches, batch_size, state_dim].
         """
         # Pad if needed
         if self.n_pad > 0:
@@ -121,11 +122,11 @@ class BatchProcessor:
 
         Args:
             batched_results: Results from batch processing with shape
-                [n_devices, n_batches, batch_size, *dims] where *dims are
+                [n_devices, n_batches, batch_size, \\*dims] where \\*dims are
                 any additional dimensions from the operation.
 
         Returns:
-            Unbatched and unpadded results with shape [n_states, *dims].
+            Array of unbatched and unpadded results with shape [n_states, \\*dims].
         """
         # Reshape to flatten batch dimensions
         results = jnp.reshape(batched_results, (-1, *batched_results.shape[3:]))

@@ -304,8 +304,9 @@ class Solver(ABC):
         )
 
     def _unbatch_results(
-        self, padded_batched_results: Float[Array, "n_devices n_batches batch_size"]
-    ) -> Float[Array, "n_states"]:
+        self,
+        padded_batched_results: Float[Array, "n_devices n_batches batch_size *dims"],
+    ) -> Float[Array, "n_states *dims"]:
         """Remove padding from batched results and combine across devices."""
         return self.batch_processor.unbatch_results(padded_batched_results)
 

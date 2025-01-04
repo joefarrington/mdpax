@@ -367,7 +367,7 @@ class MirjaliliPlateletPerishable(Problem):
             random_event: Random event vector [event_dim]
 
         Returns:
-            A tuple containing the next state vector [state_dim] and the immediate reward
+            Tuple containing the next state vector [state_dim] and the immediate reward
         """
         demand = random_event[self.random_event_component_lookup["demand"]]
         max_stock_received = random_event[
@@ -503,7 +503,7 @@ class MirjaliliPlateletPerishable(Problem):
             stock_element: Available stock of current age
 
         Returns:
-            A tuple containing the remaining demand and remaining stock
+            Tuple containing the remaining demand and remaining stock
             after processing this age category
         """
         remaining_stock = (stock_element - remaining_demand).clip(0)

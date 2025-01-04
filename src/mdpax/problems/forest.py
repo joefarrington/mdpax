@@ -189,7 +189,7 @@ class Forest(Problem):
             random_event: Random event vector [event_dim]
 
         Returns:
-            A tuple containing the next state vector [state_dim] and
+            Tuple containing the next state vector [state_dim] and
             the immediate reward
         """
         is_cut = action[0] == 1

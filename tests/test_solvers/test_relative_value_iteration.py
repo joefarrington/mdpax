@@ -22,9 +22,7 @@ jax.config.update("jax_enable_x64", True)
         ),
     ],
 )
-def test_matches_reference_policy(
-    self, tmpdir, shared_datadir, reported_policy_filename
-):
+def test_matches_reference_policy(tmpdir, shared_datadir, reported_policy_filename):
     """Test policy matches results from original implementation.
 
     Verifies that our implementation produces the same policies as the

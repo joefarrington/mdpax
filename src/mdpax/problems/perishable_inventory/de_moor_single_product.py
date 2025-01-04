@@ -273,7 +273,7 @@ class DeMoorSingleProductPerishable(Problem):
             random_event: Random event vector [event_dim]
 
         Returns:
-            A tuple containing the next state vector [state_dim] and
+            Tuple containing the next state vector [state_dim] and
             the immediate reward
         """
         demand = random_event[self.random_event_component_lookup["demand"]]
@@ -381,7 +381,7 @@ class DeMoorSingleProductPerishable(Problem):
             stock_element: Available stock of current age
 
         Returns:
-            A tuple containing the remaining demand and remaining stock
+            Tuple containing the remaining demand and remaining stock
             after processing this age category
         """
         remaining_stock = (stock_element - remaining_demand).clip(0)
