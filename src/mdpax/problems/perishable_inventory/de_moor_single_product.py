@@ -85,25 +85,22 @@ class DeMoorSingleProductPerishableConfig(ProblemConfig):
 class DeMoorSingleProductPerishable(Problem):
     """Perishable inventory MDP problem from De Moor et al. (2022).
 
-    Original paper: https://doi.org/10.1016/j.ejor.2021.10.045
-
     Models a single-product, single-echelon, periodic review perishable
     inventory replenishment problem where all stock has the same remaining
     useful life at arrival.
 
     State Space (state_dim = lead_time + max_useful_life - 1):
         Vector containing:
-        - Orders in transit: [lead_time-1] elements in range [0, max_order_quantity]
-        - Stock by age: [max_useful_life] elements in range [0, max_order_quantity],
-          ordered with oldest units on the right
+            - Orders in transit: [lead_time-1] elements in range [0, max_order_quantity]
+            - Stock by age: [max_useful_life] elements in range [0, max_order_quantity], ordered with oldest units on the right
 
     Action Space (action_dim = 1):
         Vector containing:
-        - Order quantity: 1 element in range [0, max_order_quantity]
+            - Order quantity: 1 element in range [0, max_order_quantity]
 
     Random Events (event_dim = 1):
         Vector containing:
-        - Demand: 1 element in range [0, max_demand]
+            - Demand: 1 element in range [0, max_demand]
 
     Dynamics:
         1. Place replenishment order
@@ -111,17 +108,19 @@ class DeMoorSingleProductPerishable(Problem):
         3. Issue stock using FIFO or LIFO policy
         4. Age remaining stock one period and discard expired units
         5. Reward is negative of total costs:
-           - Variable ordering costs (per unit ordered)
-           - Shortage costs (per unit of unmet demand)
-           - Wastage costs (per unit that expires)
-           - Holding costs (per unit in stock at end of period)
-        6. Receive order placed lead_time - 1 periods ago immediately
-            before the next period
+            - Variable ordering costs (per unit ordered)
+            - Shortage costs (per unit of unmet demand)
+            - Wastage costs (per unit that expires)
+            - Holding costs (per unit in stock at end of period)
+        6. Receive order placed lead_time - 1 periods ago immediately before the next period
 
     Args:
         config: Configuration object. If provided, keyword arguments are ignored.
         **kwargs: Parameters matching :class:`DeMoorSingleProductPerishableConfig`.
             See Config class for detailed parameter descriptions.
+
+    References:
+        - De Moor et al. (2022): https://doi.org/10.1016/j.ejor.2021.10.045
     """
 
     Config = DeMoorSingleProductPerishableConfig
@@ -158,11 +157,13 @@ class DeMoorSingleProductPerishable(Problem):
 
     @property
     def name(self) -> str:
-        """Name of the problem."""
+        """A unique identifier for this problem type"""
         return "de_moor_single_product"
 
     def _setup_before_space_construction(self):
         """Setup before space construction."""
+        # Convert gamma distribution parameters
+        # into parameters for numpyro.distributions.Gamma
         (
             self.demand_gamma_alpha,
             self.demand_gamma_beta,
@@ -170,10 +171,14 @@ class DeMoorSingleProductPerishable(Problem):
             self.demand_gamma_mean, self.demand_gamma_cov
         )
 
+        # Precompute demand probabilities
         self.demand_probabilities = self._calculate_demand_probabilities(
             self.demand_gamma_alpha, self.demand_gamma_beta
         )
 
+        # Build lookup tables for state, action, and random event components
+        # so they can be used to index into state, action, and random event vectors
+        # by name in transition function
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
         self.random_event_component_lookup = (
@@ -185,10 +190,10 @@ class DeMoorSingleProductPerishable(Problem):
         pass
 
     def _construct_state_space(self) -> StateSpace:
-        """Construct state space.
+        """Build array of all possible states.
 
         Returns:
-            Array containing all possible states [n_states, state_dim]
+            Array of shape [n_states, state_dim] containing all possible states
         """
         state_dim = self.max_useful_life + self.lead_time - 1
         mins = np.zeros(state_dim, dtype=np.int32)
@@ -197,18 +202,18 @@ class DeMoorSingleProductPerishable(Problem):
         return state_space
 
     def _construct_action_space(self) -> ActionSpace:
-        """Construct action space.
+        """Build array of all possible actions.
 
         Returns:
-            Array containing all possible actions [n_actions, action_dim]
+            Array of shape [n_actions, action_dim] containing all possible actions
         """
         return jnp.arange(0, self.max_order_quantity + 1).reshape(-1, 1)
 
     def _construct_random_event_space(self) -> RandomEventSpace:
-        """Construct random event space.
+        """Build array of all possible random events.
 
         Returns:
-            Array containing all possible random events [n_events, event_dim]
+            Array of shape [n_events, event_dim] containing all possible random events
         """
         return jnp.arange(0, self.max_demand + 1).reshape(-1, 1)
 
@@ -219,7 +224,7 @@ class DeMoorSingleProductPerishable(Problem):
             state: State vector to convert [state_dim]
 
         Returns:
-            Integer index of the state in state_space
+            Index of the state in state_space
         """
         return self._state_to_index_fn(state)
 
@@ -248,32 +253,28 @@ class DeMoorSingleProductPerishable(Problem):
     def transition(
         self, state: StateVector, action: ActionVector, random_event: RandomEventVector
     ) -> tuple[StateVector, Reward]:
-        """Compute next state and reward for inventory transition.
+        """Compute next state and reward for a transition.
 
         Processes one step of the perishable inventory system:
-        1. Place replenishment order
-        2. Sample demand from truncated, discretized gamma distribution
-        3. Issue stock using FIFO or LIFO policy
-        4. Age remaining stock one period and discard expired units
-        5. Reward is negative of total costs:
-           - Variable ordering costs (per unit ordered)
-           - Shortage costs (per unit of unmet demand)
-           - Wastage costs (per unit that expires)
-           - Holding costs (per unit in stock at end of period)
-        6. Receive order placed lead_time - 1 periods ago immediately
-            before the next period
+            1. Place replenishment order
+            2. Sample demand from truncated, discretized gamma distribution
+            3. Issue stock using FIFO or LIFO policy
+            4. Age remaining stock one period and discard expired units
+            5. Reward is negative of total costs:
+                - Variable ordering costs (per unit ordered)
+                - Shortage costs (per unit of unmet demand)
+                - Wastage costs (per unit that expires)
+                - Holding costs (per unit in stock at end of period)
+            6. Receive order placed lead_time - 1 periods ago immediately before the next period
 
         Args:
-            state: Current state vector [state_dim] containing:
-                - Orders in transit [lead_time-1]
-                - Current stock levels by age [max_useful_life]
-            action: Action vector [action_dim] containing order quantity
-            random_event: Random event vector [event_dim] containing demand
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            random_event: Random event vector [event_dim]
 
         Returns:
-            Tuple of (next_state, reward) where:
-                - next_state is the resulting state vector [state_dim]
-                - reward is the negative of total costs for this step
+            A tuple containing the next state vector [state_dim] and
+            the immediate reward
         """
         demand = random_event[self.random_event_component_lookup["demand"]]
         opening_in_transit = state[self.state_component_lookup["in_transit"]]
@@ -345,7 +346,7 @@ class DeMoorSingleProductPerishable(Problem):
             demand: Total customer demand to satisfy
 
         Returns:
-            Updated stock levels after issuing [max_useful_life]
+            Array of updated stock levels after issuing [max_useful_life]
         """
         _, remaining_stock = jax.lax.scan(
             self._issue_one_step, demand, opening_stock, reverse=True
@@ -365,7 +366,7 @@ class DeMoorSingleProductPerishable(Problem):
             demand: Total customer demand to satisfy
 
         Returns:
-            Updated stock levels after issuing [max_useful_life]
+            Array of updated stock levels after issuing [max_useful_life]
         """
         _, remaining_stock = jax.lax.scan(self._issue_one_step, demand, opening_stock)
         return remaining_stock
@@ -380,9 +381,8 @@ class DeMoorSingleProductPerishable(Problem):
             stock_element: Available stock of current age
 
         Returns:
-            Tuple of (remaining_demand, remaining_stock) where:
-                - remaining_demand is unfulfilled demand after this age
-                - remaining_stock is stock left in this age category
+            A tuple containing the remaining demand and remaining stock
+            after processing this age category
         """
         remaining_stock = (stock_element - remaining_demand).clip(0)
         remaining_demand = (remaining_demand - stock_element).clip(0)
@@ -397,10 +397,10 @@ class DeMoorSingleProductPerishable(Problem):
         """Calculate reward (negative cost) for one transition step.
 
         Computes total cost by combining:
-        - Variable ordering costs
-        - Shortage costs
-        - Wastage costs from expired items
-        - Holding costs for inventory
+            - Variable ordering costs
+            - Shortage costs
+            - Wastage costs from expired items
+            - Holding costs for inventory
 
         Args:
             state: Current state vector [state_dim]

@@ -54,6 +54,15 @@ class Problem(ABC):
         - _setup_before_space_construction: Custom setup before space construction
         - _setup_after_space_construction: Custom setup after space construction
 
+    Attributes:
+        state_space: Array of shape [n_states, state_dim] containing all possible states
+        action_space: Array of shape [n_actions, action_dim] containing all possible actions
+        random_event_space: Array of shape [n_events, event_dim] containing all possible random events
+        n_states: Number of states in the problem
+        n_actions: Number of actions in the problem
+        n_random_events: Number of random events in the problem
+        name: A unique identifier for this problem type
+
     Shape Requirements:
         - Single state: [state_dim]
         - Single action: [action_dim]
@@ -119,7 +128,7 @@ class Problem(ABC):
 
     @abstractmethod
     def _construct_state_space(self) -> StateSpace:
-        """Build an array of all possible states.
+        """Build array of all possible states.
 
         Returns:
             Array of shape [n_states, state_dim] containing all possible states

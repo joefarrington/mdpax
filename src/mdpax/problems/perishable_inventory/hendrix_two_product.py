@@ -82,8 +82,6 @@ class HendrixTwoProductPerishableConfig(ProblemConfig):
 class HendrixTwoProductPerishable(Problem):
     """Two-product perishable inventory MDP problem from Hendrix et al. (2019).
 
-    Original paper: https://doi.org/10.1002/cmm4.1027
-
     Models a two-product, single-echelon, periodic review perishable
     inventory replenishment problem where all stock has the same remaining
     useful life at arrival and there is the possibility for substution between
@@ -91,30 +89,37 @@ class HendrixTwoProductPerishable(Problem):
 
     State Space (state_dim = 2 * max_useful_life):
         Vector containing:
-        - Product A stock by age: [max_useful_life] elements in range [0, max_order_quantity_a],
-          ordered with oldest units on the right
-        - Product B stock by age: [max_useful_life] elements in range [0, max_order_quantity_b],
-          ordered with oldest units on the right
+            - Product A stock by age: [max_useful_life] elements in range [0, max_order_quantity_a], ordered with oldest units on the right
+            - Product B stock by age: [max_useful_life] elements in range [0, max_order_quantity_b], ordered with oldest units on the right
 
     Action Space (action_dim = 2):
         Vector containing:
-        - Product A order quantity: 1 element in range [0, max_order_quantity_a]
-        - Product B order quantity: 1 element in range [0, max_order_quantity_b]
+            - Product A order quantity: 1 element in range [0, max_order_quantity_a]
+            - Product B order quantity: 1 element in range [0, max_order_quantity_b]
 
     Random Events (event_dim = 2):
         Vector containing:
-        - Product A units issued: 1 element in range [0, max_stock_a]
-        - Product B units issued: 1 element in range [0, max_stock_b]
+            - Product A units issued: 1 element in range [0, max_stock_a]
+            - Product B units issued: 1 element in range [0, max_stock_b]
 
     Dynamics:
         1. Place replenishment order
         2. Random event determines units issued of each product, incorporating both:
-           - Poisson-distributed demand for each product
-           - Possible substitution from A to B when B's demand exceeds stock
+            - Poisson-distributed demand for each product
+            - Possible substitution from A to B when B's demand exceeds stock
         3. Issue stock using FIFO policy for each product
         4. Age remaining stock one period and discard expired units
         5. Reward is revenue from units issued less variable ordering costs
         6. Receive order placed at the start of the period immediately before the next period
+
+    Args:
+        config: Configuration object. If provided, keyword arguments are ignored.
+        **kwargs: Parameters matching :class:`HendrixTwoProductPerishableConfig`.
+            See Config class for detailed parameter descriptions.
+
+
+    References:
+        - Hendrix et al. (2019): https://doi.org/10.1002/cmm4.1027
 
     Note:
         The three random elements in the transition are the demand for each product and
@@ -122,11 +127,6 @@ class HendrixTwoProductPerishable(Problem):
         product A. For consistency with the original implementation, the random events
         are taken the be the number of units of each product issued. The transition is
         deterministic given the number of products of each type issued.
-
-    Args:
-        config: Configuration object. If provided, keyword arguments are ignored.
-        **kwargs: Parameters matching :class:`HendrixTwoProductPerishableConfig`.
-            See Config class for detailed parameter descriptions.
     """
 
     Config = HendrixTwoProductPerishableConfig
@@ -158,17 +158,21 @@ class HendrixTwoProductPerishable(Problem):
 
     @property
     def name(self) -> str:
-        """Name of the problem."""
+        """A unique identifier for this problem type"""
         return "hendrix_two_product"
 
     def _setup_before_space_construction(self) -> None:
         """Setup before space construction."""
+        # Compute dynamic limits on stock and demand
         self.max_stock_a = self.max_order_quantity_a * self.max_useful_life
         self.max_stock_b = self.max_order_quantity_b * self.max_useful_life
         self.max_demand = self.max_useful_life * (
             max(self.max_order_quantity_a, self.max_order_quantity_b) + 2
         )
 
+        # Build lookup tables for state, action, and random event components
+        # so they can be used to index into state, action, and random event vectors
+        # by name in transition function
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
         self.random_event_component_lookup = (
@@ -177,43 +181,15 @@ class HendrixTwoProductPerishable(Problem):
 
     def _setup_after_space_construction(self) -> None:
         """Setup after space construction."""
-        # Precompute conditional probabilities for speed
+        # Precompute conditional probabilities
         self.pu = self._calculate_pu()
         self.pz = self._calculate_pz()
 
-    @property
-    def _state_bounds(
-        self,
-    ) -> tuple[Float[Array, "state_dim"], Float[Array, "state_dim"]]:
-        """Return min and max values for each state dimension.
-
-        State dimensions are:
-        - First max_useful_life dimensions: stock at each age for product A [0, max_order_quantity_a]
-        - Next max_useful_life dimensions: stock at each age for product B [0, max_order_quantity_b]
-
-        Returns:
-            Tuple of (mins, maxs) where each array has shape [state_dim]
-            and state_dim = 2 * max_useful_life
-        """
-        mins = jnp.zeros(2 * self.max_useful_life, dtype=jnp.int32)
-        maxs = jnp.hstack(
-            [
-                jnp.full(
-                    self.max_useful_life, self.max_order_quantity_a, dtype=jnp.int32
-                ),
-                jnp.full(
-                    self.max_useful_life, self.max_order_quantity_b, dtype=jnp.int32
-                ),
-            ]
-        )
-
-        return mins, maxs
-
     def _construct_state_space(self) -> StateSpace:
-        """Construct state space.
+        """Build array of all possible states.
 
         Returns:
-            Array containing all possible states [n_states, state_dim]
+            Array of shape [n_states, state_dim] containing all possible states
         """
 
         mins = np.zeros(2 * self.max_useful_life, dtype=np.int32)
@@ -233,10 +209,10 @@ class HendrixTwoProductPerishable(Problem):
         return state_space
 
     def _construct_action_space(self) -> ActionSpace:
-        """Construct action space.
+        """Build array of all possible actions.
 
         Returns:
-            Array containing all possible actions [n_actions, action_dim]
+            Array of shape [n_actions, action_dim] containing all possible actions
         """
         mins = np.array([0, 0])
         maxs = np.array([self.max_order_quantity_a, self.max_order_quantity_b])
@@ -244,15 +220,26 @@ class HendrixTwoProductPerishable(Problem):
         return action_space
 
     def _construct_random_event_space(self) -> RandomEventSpace:
-        """Construct random event space.
+        """Build array of all possible random events.
 
         Returns:
-            Array containing all possible random events [n_events, event_dim]
+            Array of shape [n_events, event_dim] containing all possible random events
         """
         mins = np.array([0, 0])
         maxs = np.array([self.max_stock_a, self.max_stock_b])
         random_event_space, self._random_event_to_index = create_range_space(mins, maxs)
         return random_event_space
+
+    def state_to_index(self, state: StateVector) -> int:
+        """Convert state vector to index.
+
+        Args:
+            state: State vector to convert [state_dim]
+
+        Returns:
+            Integer index of the state in state_space
+        """
+        return self._state_to_index_fn(state)
 
     def random_event_probability(
         self,
@@ -263,9 +250,8 @@ class HendrixTwoProductPerishable(Problem):
         """Compute probability of random event given state and action.
 
         The number of units issued of each product follows a compound distribution:
-        - Demand for each product is Poisson distributed
-        - For product B, if demand exceeds stock, excess demand can be
-          satisfied by product A with binomial probability
+            - Demand for each product is Poisson distributed
+            - For product B, if demand exceeds stock, excess demand can be satisfied by product A with binomial probability
 
         Args:
             state: Current state vector [state_dim]
@@ -295,29 +281,26 @@ class HendrixTwoProductPerishable(Problem):
         action: ActionVector,
         random_event: RandomEventVector,
     ) -> tuple[StateVector, Reward]:
-        """Compute next state and reward for inventory transition.
+        """Compute next state and reward for a transition.
 
         Processes one step of the two-product perishable inventory system:
-        1. Place replenishment order
-        2. Random event determines units issued of each product, incorporating both:
-           - Poisson-distributed demand for each product
-           - Possible substitution from A to B when B's demand exceeds stock
-        3. Issue stock using FIFO policy for each product
-        4. Age remaining stock one period and discard expired units
-        5. Reward is revenue from units issued less variable ordering costs
-        6. Receive order placed at the start of the period immediately before the next period
+            1. Place replenishment order
+            2. Random event determines units issued of each product, incorporating both:
+                - Poisson-distributed demand for each product
+                - Possible substitution from A to B when B's demand exceeds stock
+            3. Issue stock using FIFO policy for each product
+            4. Age remaining stock one period and discard expired units
+            5. Reward is revenue from units issued less variable ordering costs
+            6. Receive order placed at the start of the period immediately before the next period
 
         Args:
-            state: Current state vector [state_dim] containing:
-                - Stock levels by age for product A [max_useful_life]
-                - Stock levels by age for product B [max_useful_life]
-            action: Action vector [action_dim] containing order quantities
-            random_event: Random event vector [event_dim] containing units issued
+            state: Current state vector [state_dim]
+            action: Action vector [action_dim]
+            random_event: Random event vector [event_dim]
 
         Returns:
-            Tuple of (next_state, reward) where:
-                - next_state is the resulting state vector [state_dim]
-                - reward is revenue minus costs for this step
+            A tuple containing the next state vector [state_dim] and
+            the immediate reward
         """
         issued_a = random_event[self.random_event_component_lookup["issued_a"]]
         issued_b = random_event[self.random_event_component_lookup["issued_b"]]
@@ -354,25 +337,16 @@ class HendrixTwoProductPerishable(Problem):
             single_step_reward,
         )
 
-    def state_to_index(self, state: StateVector) -> int:
-        """Convert state vector to index.
-
-        Args:
-            state: State vector to convert [state_dim]
-
-        Returns:
-            Integer index of the state in state_space
-        """
-        return self._state_to_index_fn(state)
-
     def initial_value(self, state: StateVector) -> float:
-        """Initial value estimate based on one-step ahead expected sales revenue.
+        """Return initial value estimate for a given state.
+
+        Initial value estimate based on one-step ahead expected sales revenue.
 
         Args:
-            state: State vector to estimate value for [state_dim]
+            state: State vector [state_dim]
 
         Returns:
-            Expected sales revenue for one step from this state
+            Initial value estimate for the given state
         """
         return self._calculate_expected_sales_revenue(state)
 
@@ -414,7 +388,7 @@ class HendrixTwoProductPerishable(Problem):
             demand: Total customer demand to satisfy
 
         Returns:
-            Updated stock levels after issuing [max_useful_life]
+            Array of ppdated stock levels after issuing [max_useful_life]
         """
         _, remaining_stock = jax.lax.scan(
             self._issue_one_step, demand, opening_stock, reverse=True
@@ -431,9 +405,8 @@ class HendrixTwoProductPerishable(Problem):
             stock_element: Available stock of current age
 
         Returns:
-            Tuple of (remaining_demand, remaining_stock) where:
-                - remaining_demand is unfulfilled demand after this age
-                - remaining_stock is stock left in this age category
+            A tuple containing the remaining demand and remaining stock
+            after processing this age category
         """
         remaining_stock = (stock_element - remaining_demand).clip(0)
         remaining_demand = (remaining_demand - stock_element).clip(0)

@@ -118,9 +118,6 @@ WEEKDAYS = [
 class MirjaliliPlateletPerishable(Problem):
     """Platelet inventory MDP problem from Mirjalili (2022).
 
-    Thesis: https://tspace.library.utoronto.ca/bitstream/1807/124976/1/Mirjalili_Mahdi_202211_PhD_thesis.pdf
-    Preprint: https://doi.org/10.48550/arXiv.2307.09395
-
     Models a single-product, single-echelon, periodic review perishable
     inventory replenishment problem for platelets in a hospital blood bank
     where the products have a fixed maximum useful life but uncertain remaining
@@ -129,47 +126,47 @@ class MirjaliliPlateletPerishable(Problem):
 
     State Space (state_dim = max_useful_life):
         Vector containing:
-        - Weekday: 1 element in range [0, 6] (Monday to Sunday)
-        - Stock by age: [max_useful_life-1] elements in range [0, max_order_quantity],
-          ordered with oldest units on the right
+            - Weekday: 1 element in range [0, 6] (Monday to Sunday)
+            - Stock by age: [max_useful_life-1] elements in range [0, max_order_quantity], ordered with oldest units on the right
 
     Action Space (action_dim = 1):
         Vector containing:
-        - Order quantity: 1 element in range [0, max_order_quantity]
+            - Order quantity: 1 element in range [0, max_order_quantity]
 
     Random Events (event_dim = max_useful_life + 1):
         Vector containing:
-        - Demand: 1 element in range [0, max_demand]
-        - Stock received by age: [max_useful_life] elements in range [0, max_order_quantity]
-          summing to at most max_order_quantity
+            - Demand: 1 element in range [0, max_demand]
+            - Stock received by age: [max_useful_life] elements in range [0, max_order_quantity] summing to at most max_order_quantity
 
     Dynamics:
         1. Place replenishment order
-        2. Immediately receive the order, where the remaining useful life of the
-            units at arrival is sampled from a multinomial distribution with
-            parameters that may depend on the order quantity
+        2. Immediately receive the order, where the remaining useful life of the units at arrival is sampled from a multinomial distribution with parameters that may depend on the order quantity
         3. Sample demand from weekday-specific truncated negative binomial distribution
         4. Issue stock using OUFO (Oldest Units First Out) policy
         5. Age remaining stock one period and discard expired units
         6. Reward is negative of total costs:
-           - Variable ordering costs (per unit ordered)
-           - Fixed ordering costs (when order > 0)
-           - Shortage costs (per unit of unmet demand)
-           - Wastage costs (per unit that expires)
-           - Holding costs (per unit in stock at end of period, including expiring units)
+            - Variable ordering costs (per unit ordered)
+            - Fixed ordering costs (when order > 0)
+            - Shortage costs (per unit of unmet demand)
+            - Wastage costs (per unit that expires)
+            - Holding costs (per unit in stock at end of period, including expiring units)
         7. Update weekday to next day of week
-
-    Note:
-        - In the original paper, the demand distribution is a truncated negative
-          binomial distribution over the number of failured before reaching a specified
-          number of successed parameterized by n (target number of successes)
-          and delta (expected value).
-        - The probability of success of a trial is n/(n + delta).
 
     Args:
         config: Configuration object. If provided, keyword arguments are ignored.
         **kwargs: Parameters matching :class:`MirjaliliPlateletPerishableConfig`.
             See Config class for detailed parameter descriptions.
+
+    References:
+        - Mirjalili (2022): https://tspace.library.utoronto.ca/bitstream/1807/124976/1/Mirjalili_Mahdi_202211_PhD_thesis.pdf
+        - Abouee-Mehrizi et al. (2023): https://doi.org/10.48550/arXiv.2307.09395
+
+    Note:
+        - In the original source, the demand distribution is a truncated negative
+          binomial distribution over the number of failured before reaching a specified
+          number of successed parameterized by n (target number of successes)
+          and delta (expected value).
+        - The probability of success of a trial is n/(n + delta).
     """
 
     Config = MirjaliliPlateletPerishableConfig
@@ -209,15 +206,20 @@ class MirjaliliPlateletPerishable(Problem):
 
     @property
     def name(self) -> str:
-        """Name of the problem."""
+        """A unique identifier for this problem type"""
         return "mirjalili_platelet"
 
     def _setup_before_space_construction(self) -> None:
         """Setup before space construction."""
         # Calculate probability of success, from parameterisation provided in MM thesis
+        # to parameters for numpyro.distributions.NegativeBinomial
         self.weekday_demand_negbin_p = self.weekday_demand_negbin_n / (
             self.weekday_demand_negbin_delta + self.weekday_demand_negbin_n
         )
+
+        # Build lookup tables for state, action, and random event components
+        # so they can be used to index into state, action, and random event vectors
+        # by name in transition function
         self.state_component_lookup = self._construct_state_component_lookup()
         self.action_component_lookup = self._construct_action_component_lookup()
         self.random_event_component_lookup = (
@@ -229,10 +231,10 @@ class MirjaliliPlateletPerishable(Problem):
         pass
 
     def _construct_state_space(self) -> StateSpace:
-        """Construct state space.
+        """Build array of all possible states.
 
         Returns:
-            Array containing all possible states [n_states, state_dim]
+            Array of shape [n_states, state_dim] containing all possible states
         """
 
         mins = np.zeros(self.max_useful_life, dtype=np.int32)
@@ -249,18 +251,18 @@ class MirjaliliPlateletPerishable(Problem):
         return state_space
 
     def _construct_action_space(self) -> ActionSpace:
-        """Construct action space.
+        """Build array of all possible actions.
 
         Returns:
-            Array containing all possible actions [n_actions, action_dim]
+            Array of shape [n_actions, action_dim] containing all possible actions
         """
         return jnp.arange(0, self.max_order_quantity + 1).reshape(-1, 1)
 
     def _construct_random_event_space(self) -> RandomEventSpace:
-        """Construct random event space.
+        """Build array of all possible random events.
 
         Returns:
-            Array containing all possible random events [n_events, event_dim]
+            Array of shape [n_events, event_dim] containing all possible random events
         """
         demands = np.arange(self.max_demand + 1).reshape(1, -1)
 
@@ -299,7 +301,7 @@ class MirjaliliPlateletPerishable(Problem):
             state: State vector to convert [state_dim]
 
         Returns:
-            Integer index of the state in state_space
+            Index of the state in state_space
         """
         return self._state_to_index_fn(state)
 
@@ -343,23 +345,21 @@ class MirjaliliPlateletPerishable(Problem):
         action: ActionVector,
         random_event: RandomEventVector,
     ) -> tuple[StateVector, Reward]:
-        """Compute next state and reward for inventory transition.
+        """Compute next state and reward for a transition.
 
         Processes one step of the platelet inventory system:
-        1. Place replenishment order
-        2. Immediately receive the order, where the remaining useful life of the
-            units at arrival is sampled from a multinomial distribution with
-            parameters that may depend on the order quantity
-        3. Sample demand from weekday-specific negative binomial distribution
-        4. Issue stock using OUFO (Oldest Units First Out) policy
-        5. Age remaining stock one period and discard expired units
-        6. Reward is negative of total costs:
-           - Variable ordering costs (per unit ordered)
-           - Fixed ordering costs (when order > 0)
-           - Shortage costs (per unit of unmet demand)
-           - Wastage costs (per unit that expires)
-           - Holding costs (per unit in stock at end of period, including expiring units)
-        7. Update weekday to next day of week
+            1. Place replenishment order
+            2. Immediately receive the order, where the remaining useful life of the units at arrival is sampled from a multinomial distribution with parameters that may depend on the order quantity
+            3. Sample demand from weekday-specific truncated negative binomial distribution
+            4. Issue stock using OUFO (Oldest Units First Out) policy
+            5. Age remaining stock one period and discard expired units
+            6. Reward is negative of total costs:
+                - Variable ordering costs (per unit ordered)
+                - Fixed ordering costs (when order > 0)
+                - Shortage costs (per unit of unmet demand)
+                - Wastage costs (per unit that expires)
+                - Holding costs (per unit in stock at end of period, including expiring units)
+            7. Update weekday to next day of week
 
         Args:
             state: Current state vector [state_dim]
@@ -367,9 +367,7 @@ class MirjaliliPlateletPerishable(Problem):
             random_event: Random event vector [event_dim]
 
         Returns:
-            Tuple of (next_state, reward) where:
-                - next_state is the resulting state vector [state_dim]
-                - reward is negative of total costs for this step
+            A tuple containing the next state vector [state_dim] and the immediate reward
         """
         demand = random_event[self.random_event_component_lookup["demand"]]
         max_stock_received = random_event[
@@ -455,37 +453,20 @@ class MirjaliliPlateletPerishable(Problem):
     # ----------------------------------
 
     def _construct_state_component_lookup(self) -> dict[str, int | slice]:
-        """Build mapping from state components to indices.
-
-        Returns:
-            Dictionary mapping component names to indices or slices:
-            - weekday: Index for weekday component
-            - stock: Slice for stock by age components
-        """
+        """Build mapping from state components to indices."""
         return {
             "weekday": 0,  # single index
             "stock": slice(1, self.max_useful_life),  # slice for array
         }
 
     def _construct_action_component_lookup(self) -> dict[str, int]:
-        """Build mapping from action components to indices.
-
-        Returns:
-            Dictionary mapping component names to indices:
-            - order_quantity: Index for order quantity component
-        """
+        """Build mapping from action components to indices."""
         return {
             "order_quantity": 0,
         }
 
     def _construct_random_event_component_lookup(self) -> dict[str, int | slice]:
-        """Build mapping from random event components to indices.
-
-        Returns:
-            Dictionary mapping component names to indices or slices:
-            - demand: Index for demand component
-            - stock_received: Slice for stock received by age components
-        """
+        """Build mapping from random event components to indices."""
         return {
             "demand": 0,  # single index
             "stock_received": slice(1, self.max_useful_life + 1),  # slice for array
@@ -504,7 +485,7 @@ class MirjaliliPlateletPerishable(Problem):
             demand: Total customer demand to satisfy
 
         Returns:
-            Updated stock levels after issuing [max_useful_life]
+            Array of updated stock levels after issuing [max_useful_life]
         """
         # Oldest stock on RHS of vector, so reverse
         _, remaining_stock = jax.lax.scan(
@@ -522,9 +503,8 @@ class MirjaliliPlateletPerishable(Problem):
             stock_element: Available stock of current age
 
         Returns:
-            Tuple of (remaining_demand, remaining_stock) where:
-                - remaining_demand is unfulfilled demand after this age
-                - remaining_stock is stock left in this age category
+            A tuple containing the remaining demand and remaining stock
+            after processing this age category
         """
         remaining_stock = (stock_element - remaining_demand).clip(0)
         remaining_demand = (remaining_demand - stock_element).clip(0)
@@ -539,11 +519,11 @@ class MirjaliliPlateletPerishable(Problem):
         """Calculate reward (negative costs) for one transition step.
 
         Computes total reward by combining:
-        - Variable ordering costs (per unit ordered)
-        - Fixed ordering costs (when order > 0)
-        - Shortage costs (per unit of unmet demand)
-        - Wastage costs (per unit that expires)
-        - Holding costs (per unit in stock at end of period, including units about to expire)
+            - Variable ordering costs (per unit ordered)
+            - Fixed ordering costs (when order > 0)
+            - Shortage costs (per unit of unmet demand)
+            - Wastage costs (per unit that expires)
+            - Holding costs (per unit in stock at end of period, including units about to expire)
 
         Args:
             state: Current state vector [state_dim]
