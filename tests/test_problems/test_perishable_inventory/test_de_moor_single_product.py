@@ -94,7 +94,7 @@ def test_space_construction(params, expected_spaces):
         (
             1,
             jnp.array([1, 1]),  # [new_stock, old_stock]
-            jnp.array([1]),  # order 2 unit
+            jnp.array([1]),  # order 1 unit
             jnp.array([3]),  # demand 3 units
             jnp.array([1, 0]),  # [received_order, remaining_stock]
             -8.0,  # variable_order = 3, shortage_cost = 5, wastage_cost = 0, holding_cost = 0
@@ -110,10 +110,10 @@ def test_space_construction(params, expected_spaces):
         (
             2,
             jnp.array([0, 1, 1]),  # [in_transit, new_stock, old_stock]
-            jnp.array([5]),  # order 3 units
-            jnp.array([3]),  # demand 4 units
+            jnp.array([5]),  # order 5 units
+            jnp.array([3]),  # demand 3 units
             jnp.array([5, 0, 0]),  # [new_in_transit, received_order, remaining_stock]
-            -25.0,  # variable_order = 15, shortage_cost = 10, wastage_cost = 0, holding_cost = 0
+            -20.0,  # variable_order = 15, shortage_cost = 5, wastage_cost = 0, holding_cost = 0
         ),
     ],
 )
