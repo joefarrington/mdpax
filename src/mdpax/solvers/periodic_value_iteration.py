@@ -26,15 +26,15 @@ class PeriodicValueIterationConfig(SolverConfig):
         problem: Optional problem configuration. If not provided, can pass a Problem
             instance directly to the solver. If a Problem instance with a config is
             provided to the solver, its config will be extracted and stored here.
-        period: Number of iterations to check for periodic convergence
+        period: Number of iterations to check for periodic convergence (must be positive)
         gamma: Discount factor in [0,1]
-        epsilon: Convergence threshold for value changes
-        max_batch_size: Maximum states to process in parallel on each device
+        epsilon: Convergence threshold for value changes (must be positive)
+        max_batch_size: Maximum states to process in parallel on each device (must be positive)
         jax_double_precision: Whether to use float64 precision
-        verbose: Logging verbosity level (0-4)
+        verbose: Logging verbosity level (must be 0-4)
         checkpoint_dir: Directory to store checkpoints
-        checkpoint_frequency: How often to save checkpoints (0 to disable)
-        max_checkpoints: Maximum number of checkpoints to keep
+        checkpoint_frequency: How often to save checkpoints (must be non-negative, 0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep (must be non-negative)
         enable_async_checkpointing: Whether to save checkpoints asynchronously
         clear_value_history_on_convergence: Whether to clear history after convergence
 
@@ -69,7 +69,7 @@ class PeriodicValueIterationConfig(SolverConfig):
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
-        if self.problem is not None and not isinstance(ProblemConfig):
+        if self.problem is not None and not isinstance(self.problem, ProblemConfig):
             raise TypeError("problem must be a ProblemConfig if provided")
         if self.period <= 0:
             raise ValueError("Period must be positive")
@@ -85,6 +85,8 @@ class PeriodicValueIterationConfig(SolverConfig):
             raise ValueError("checkpoint_frequency must be non-negative")
         if self.max_checkpoints < 0:
             raise ValueError("max_checkpoints must be non-negative")
+        if not 0 <= self.verbose <= 4:
+            raise ValueError("verbose must be between 0 and 4")
 
 
 @chex.dataclass(frozen=True)
@@ -116,18 +118,20 @@ class PeriodicValueIterationState(SolverState):
 
 
 class PeriodicValueIteration(ValueIteration):
-    """Value iteration solver that checks for convergence over a specified period.
+    """Periodic value iteration solver for MDPs
 
     This is particularly useful for problems with periodic
     structure in the state space, where it may require fewer iterations
     to reach convergence than standard value iteration.
 
-    For discounted problems (gamma < 1), it accounts for discounting when comparing
-    values across periods. For undiscounted problems (gamma = 1), it directly
-    compares values separated by one period.
+    Convergence testing is based on the span of value differences over a period.
+    For undiscounted problems, this is simply the span of differences between
+    current values and values from one period ago. For discounted problems,
+    we sum the consecutive differences over the period, scaling each by the
+    appropriate discount factor. The solver stores a history of values over
+    the period to perform this comparison.
 
-    Notes:
-        Supports checkpointing for long-running problems.
+    Supports checkpointing for long-running problems using the CheckpointMixin.
 
     Args:
         problem: Problem instance or None if using config
@@ -158,18 +162,11 @@ class PeriodicValueIteration(ValueIteration):
         self.value_history[0] = np.array(self.values)
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
-        """Run one iteration and check for periodic convergence.
-
-        The convergence measure is the span (max - min) of the period deltas.
-        For undiscounted problems, this is simply the span of differences between
-        current values and values from one period ago. For discounted problems,
-        we sum the consecutive differences over the period, scaling each by the
-        appropriate discount factor.
+        """Perform one iteration of the solution algorithm.
 
         Returns:
-            Tuple of (new_values, convergence_measure) where:
-                - new_values are the updated state values [n_states]
-                - convergence_measure is span of period deltas
+            Tuple of (new values, convergence measure) where new values has shape
+            [n_states]
         """
         # Get new values using parent's batch processing
         new_values = self._update_values(
@@ -202,18 +199,14 @@ class PeriodicValueIteration(ValueIteration):
         return new_values, conv
 
     def solve(self, max_iterations: int = 2000) -> PeriodicValueIterationState:
-        """Run periodic value iteration to convergence.
+        """Run solver to convergence or max iterations.
 
-        Performs synchronous value iteration updates until either:
-        1. The span between current value function estimate and value function
-            estimate one period ago is below epsilon
-        2. The maximum number of iterations is reached
+        Args:
+            max_iterations: Maximum number of iterations to run
 
         Returns:
-            SolverState containing:
-                - Final values [n_states]
-                - Optimal policy [n_states, action_dim]
-                - Solver info including value history
+            SolverState containing final values [n_states], optimal policy [n_states, action_dim],
+            and SolverInfo including iteration count and value history.
         """
         for _ in range(max_iterations):
             self.iteration += 1
@@ -279,9 +272,9 @@ class PeriodicValueIteration(ValueIteration):
     ) -> tuple[float, float]:
         """Return min and max undiscounted value changes over a period.
 
-        For discounted problems (γ<1), we sum the differences between consecutive
+        For discounted problems (gamma<1), we sum the differences between consecutive
         steps in the period, adjusting for the discount factor. The differences
-        are scaled by 1/γ^(current_iteration - p - 1) to remove discounting.
+        are scaled by 1/gamma^(current_iteration - p - 1) to remove discounting.
 
         Args:
             values: Current value function [n_states]
@@ -310,15 +303,6 @@ class PeriodicValueIteration(ValueIteration):
         """Clear value history to free memory after convergence."""
         if self.clear_value_history_on_convergence:
             self.value_history = None
-
-    def _get_solver_config(self) -> PeriodicValueIterationConfig:
-        """Get solver configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this solver instance
-        """
-        return self.config
 
     @property
     def solver_state(self) -> PeriodicValueIterationState:

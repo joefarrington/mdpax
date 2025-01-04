@@ -23,10 +23,10 @@ class RelativeValueIterationConfig(SolverConfig):
         gamma: Discount factor (fixed at 1.0 for relative value iteration)
         max_batch_size: Maximum states to process in parallel on each device
         jax_double_precision: Whether to use float64 precision
-        verbose: Logging verbosity level (0-4)
+        verbose: Logging verbosity level (must be 0-4)
         checkpoint_dir: Directory to store checkpoints
-        checkpoint_frequency: How often to save checkpoints (0 to disable)
-        max_checkpoints: Maximum number of checkpoints to keep
+        checkpoint_frequency: How often to save checkpoints (must be non-negative, 0 to disable)
+        max_checkpoints: Maximum number of checkpoints to keep (must be non-negative)
         enable_async_checkpointing: Whether to save checkpoints asynchronously
 
     Example:
@@ -58,7 +58,7 @@ class RelativeValueIterationConfig(SolverConfig):
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
-        if self.problem is not None and not isinstance(ProblemConfig):
+        if self.problem is not None and not isinstance(self.problem, ProblemConfig):
             raise TypeError("problem must be a ProblemConfig if provided")
         if not self.gamma == 1.0:
             raise ValueError("gamma must be 1.0 for relative value iteration")
@@ -70,6 +70,8 @@ class RelativeValueIterationConfig(SolverConfig):
             raise ValueError("checkpoint_frequency must be non-negative")
         if self.max_checkpoints < 0:
             raise ValueError("max_checkpoints must be non-negative")
+        if not 0 <= self.verbose <= 4:
+            raise ValueError("verbose must be between 0 and 4")
 
 
 @chex.dataclass(frozen=True)
@@ -101,12 +103,12 @@ class RelativeValueIteration(ValueIteration):
     """Relative value iteration solver for average reward MDPs.
 
     This solver extends standard value iteration to handle average reward MDPs by:
-    1. Using gamma=1.0 (no discounting)
-    2. Tracking and subtracting a gain term to handle unbounded values
-    3. Using span (max - min value difference) for convergence
+        - Using gamma=1.0 (no discounting)
+        - Tracking and subtracting a gain term to handle unbounded values
 
-    Note:
-        Supports checkpointing for long-running problems.
+    Convergence testing is based on the span of value differences.
+
+    Supports checkpointing for long-running problems using the CheckpointMixin.
 
     Args:
         problem: Problem instance or None if using config
@@ -131,12 +133,11 @@ class RelativeValueIteration(ValueIteration):
         self.gain = 0.0
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
-        """Run one iteration and compute span for convergence.
+        """Perform one iteration of the solution algorithm.
 
         Returns:
-            Tuple of (new_values, span) where:
-                - new_values are the updated state values [n_states]
-                - span is max-min value difference for convergence
+            Tuple of (new values, convergence measure) where new values has shape
+            [n_states]
         """
         # Get new values using parent's batch processing
         new_values, _ = super()._iteration_step()
@@ -151,20 +152,14 @@ class RelativeValueIteration(ValueIteration):
         return new_values, span
 
     def solve(self, max_iterations: int = 2000) -> RelativeValueIterationState:
-        """Run relative value iteration.
-
-        Performs synchronous value iteration updates until either:
-        1. The span of value differences is below epsilon
-        2. The maximum number of iterations is reached
+        """Run solver to convergence or max iterations.
 
         Args:
             max_iterations: Maximum number of iterations to run
 
         Returns:
-            SolverState containing:
-                - Final values [n_states]
-                - Optimal policy [n_states, action_dim]
-                - Solver info including iteration count and gain term
+            SolverState containing final values [n_states], optimal policy [n_states, action_dim],
+            and SolverInfo including iteration count and gain
         """
         for _ in range(max_iterations):
             self.iteration += 1
@@ -201,15 +196,6 @@ class RelativeValueIteration(ValueIteration):
 
         logger.success("Relative value iteration completed")
         return self.solver_state
-
-    def _get_solver_config(self) -> RelativeValueIterationConfig:
-        """Get solver configuration for reconstruction.
-
-        Returns:
-            Configuration containing all parameters needed to reconstruct
-            this solver instance
-        """
-        return self.config
 
     @property
     def solver_state(self) -> RelativeValueIterationState:
