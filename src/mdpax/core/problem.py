@@ -38,15 +38,23 @@ class Problem(ABC):
     """Abstract base class for MDP problems.
 
     This class defines the interface for Markov Decision Process (MDP) problems.
-    Each problem must methods for constructing its state space, action space,
-    and random event space, along with transition dynamics and rewards.
+    To implement a custom problem, subclass this class and implement the following:
 
-    The interface is designed for efficient computation with JAX, supporting
-    vectorization and parallel processing. States, actions, and random events
-    are represented as vectors, and operations are designed to work with batches.
+    Required Implementations:
+        - name (property): Unique identifier for this problem type
+        - state_to_index: Convert state vectors to indices
+        - _construct_state_space: Define the full state space
+        - _construct_action_space: Define the full action space
+        - _construct_random_event_space: Define the space of random events
+        - random_event_probability: Define transition probabilities
+        - transition: Define state transitions and rewards
+
+    Optional Implementations:
+        - initial_value: Custom initialization of value function (default: 0.0)
+        - _setup_before_space_construction: Custom setup before space construction
+        - _setup_after_space_construction: Custom setup after space construction
 
     Shape Requirements:
-        All inputs/outputs maintain consistent dimensionality:
         - Single state: [state_dim]
         - Single action: [action_dim]
         - Single random event: [event_dim]
@@ -57,6 +65,10 @@ class Problem(ABC):
     Note:
         All array operations should be implemented using JAX for compatibility
         with JIT compilation and vmap/pmap.
+
+    See Also:
+        For an interactive tutorial on how to implement a custom problem, see
+        https://mdpax.readthedocs.io/en/latest/create_custom_problem.html
     """
 
     def __init__(self):
@@ -122,7 +134,7 @@ class Problem(ABC):
             state: Vector representation of a state [state_dim]
 
         Returns:
-            Integer index of the state in state_space
+            Index of the state in state_space
 
         Note:
             This mapping must be consistent with the ordering in state_space
@@ -184,8 +196,11 @@ class Problem(ABC):
             Probability of the random event occurring
 
         Note:
-            Probabilities must sum to 1 over all possible random events
-            for each state-action pair
+            - Probabilities must sum to 1 over all possible random events
+              for each state-action pair
+            - This method should be implemented to work efficiently with JAX
+              vectorization over batches of states/actions and be compatible
+              with JIT compilation
         """
         pass
 
@@ -202,13 +217,13 @@ class Problem(ABC):
             random_event: Random event vector [event_dim]
 
         Returns:
-            Tuple of (next_state, reward) where:
-                - next_state is the resulting state vector [state_dim]
-                - reward is the immediate reward for this transition
+            A tuple containing the next state vector [state_dim] and
+            the immediate reward
 
         Note:
             This method should be implemented to work efficiently with JAX
-            vectorization over batches of states/actions
+            vectorization over batches of states/actions and be compatible
+            with JIT compilation
         """
         pass
 
@@ -217,6 +232,8 @@ class Problem(ABC):
 
         This method defines how to initialize the value function for a single state.
         The solver will handle vectorization over all states efficiently.
+
+        By default, this method returns 0.0 for all states.
 
         Args:
             state: State vector [state_dim]
@@ -249,9 +266,9 @@ class Problem(ABC):
                 Set to 0 to disable this behavior.
 
         Returns:
-            tuple containing:
-                - P: Transition probability matrix [n_actions, n_states, n_states]
-                - R: Expected reward matrix [n_states, n_actions]
+            A tuple containing the transition probability matrix
+            [n_actions, n_states, n_states] and the
+            expected reward matrix [n_states, n_actions]
 
         Note:
             This method is primarily for testing and comparison purposes.
