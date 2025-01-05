@@ -1,7 +1,9 @@
 # MDPax
 
+[![Documentation Status](https://readthedocs.org/projects/mdpax/badge/?version=latest)](https://mdpax.readthedocs.io/en/latest/?badge=latest)
 [![Tests](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml/badge.svg)](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 
 MDPax is designed for researchers and practitioners who want to solve large Markov Decision Process (MDP) problems but don't want to become experts in graphics processing unit (GPU) programming. By using JAX, we can take advantage of the massive parallel processing power of GPUs while describing new problems using a simple Python interface.
 
@@ -83,8 +85,8 @@ This example demonstrates the core workflow:
 Full documentation is available at [https://mdpax.readthedocs.io/](https://mdpax.readthedocs.io/).
 
 ### Tutorials
-- [Getting Started](https://mdpax.readthedocs.io/en/latest/notebooks/getting_started.html) - Basic usage on several problems
-- [Creating custom MDP problems](https://mdpax.readthedocs.io/en/latest/notebooks/create_custom_problem.html) - Guide to implementing your own problems, using [FrozenLake](https://www.gymlibrary.dev/environments/toy_text/frozen_lake/) as an example
+- [Getting Started](https://mdpax.readthedocs.io/en/latest/notebooks/getting_started.html) - Basic usage on several problems [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/joefarrington/mdpax/blob/main/examples/getting_started.ipynb)
+- [Creating custom MDP problems](https://mdpax.readthedocs.io/en/latest/notebooks/create_custom_problem.html) - Guide to implementing your own problems, using [FrozenLake](https://www.gymlibrary.dev/environments/toy_text/frozen_lake/) as an example [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/joefarrington/mdpax/blob/main/examples/create_custom_problem.ipynb)
 
 ### API Reference
 - [Core](https://mdpax.readthedocs.io/en/latest/api.html#core) - The base classes for Problems and Solvers

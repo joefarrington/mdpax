@@ -136,3 +136,4 @@ draft_notebooks
 
 notes.md
 .ruff_cache/
+checkpoints/
