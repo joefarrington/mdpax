@@ -1,5 +1,6 @@
 # MDPax
 
+[![PyPI](https://img.shields.io/pypi/v/mdpax?label=pypi%20package)](https://pypi.org/project/mdpax/)
 [![Documentation Status](https://readthedocs.org/projects/mdpax/badge/?version=latest)](https://mdpax.readthedocs.io/en/latest/?badge=latest)
 [![Tests](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml/badge.svg)](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
