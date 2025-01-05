@@ -8,7 +8,7 @@ You can run MDPax on your local GPU, or try it for free using [Google Colab](htt
 - Solve MDPs with millions of states using value iteration
 - Automatic support for one or more identical GPUs
 - Flexible interface for defining your own MDP problem or solver algorithm
-- Asynchronous checkpointing using [orbax](https://orbax.readthedocs.io/en/latest/)
+- Asynchronous checkpointing using [Orbax](https://orbax.readthedocs.io/en/latest/)
 - Ready-to-use examples including perishable inventory problems from recent literature
 
 ## Overview
@@ -59,8 +59,8 @@ from mdpax.solvers import ValueIteration
 problem = Forest()
 
 # Create solver with discount factor gamma = 0.9,
-# and convergence tolerance epsilon = 1e-4
-solver = ValueIteration(problem, gamma=0.9, epsilon=1e-4)
+# and convergence tolerance epsilon = 0.01
+solver = ValueIteration(problem, gamma=0.9, epsilon=0.01)
 
 # Solve the problem (automatically uses GPU if available)
 solution = solver.solve(max_iterations=500)
@@ -100,13 +100,13 @@ A simple forest management problem adapted from [pymdptoolbox](https://github.co
 
 These problems demonstrate the package's ability to handle large state spaces in inventory management scenarios and were included in [Farrington et al. (2023)](https://arxiv.org/abs/2303.10672) as examples to demonstrate the benefits of implementing value iteration in JAX.
 
-#### De Moor Perishable [(De Moor et al. 2022)](https://doi.org/10.1016/j.ejor.2021.10.045)
+#### De Moor Single Product Perishable [(De Moor et al. 2022)](https://doi.org/10.1016/j.ejor.2021.10.045)
 A single-product inventory system with positive lead time and fixed useful life. Orders placed today arrive after a fixed lead time, and the state must track both current stock levels and orders in transit.
 
-#### Hendrix Perishable Substitution (Two Product) [(Hendrix et al. 2019)](https://doi.org/10.1002/cmm4.1027)
+#### Hendrix Two Product Perishable (with substitution) [(Hendrix et al. 2019)](https://doi.org/10.1002/cmm4.1027)
 A two-product inventory system with product substitution, where both products have fixed useful lives. Customers may be willing to substitute product A for B when B is out of stock.
 
-#### Mirjalili Perishable Platelet [(Mirjalili 2022; ](https://tspace.library.utoronto.ca/bitstream/1807/124976/1/Mirjalili_Mahdi_202211_PhD_thesis.pdf)[Abouee-Mehrizi et al. 2023)](https://doi.org/10.48550/arXiv.2307.09395)
+#### Mirjalili Platelet Perishable [(Mirjalili 2022; ](https://tspace.library.utoronto.ca/bitstream/1807/124976/1/Mirjalili_Mahdi_202211_PhD_thesis.pdf)[Abouee-Mehrizi et al. 2023)](https://doi.org/10.48550/arXiv.2307.09395)
 A single-product inventory management problem, modelling platelet inventory management in a hospital blood bank. Features weekday-dependent demand patterns and uncertain useful life of platelets at arrival, which may depend on the order quantity. 
 
 ## Development
@@ -226,7 +226,7 @@ Tutorials using JAX to solve problems from quantitative economics, including val
 A MATLAB toolkit for value function iteration, specifically in the context of macroeconomic modeling. Like MDPax, the toolkit automatically uses NVIDIA GPUs when available. Unlike MDPax, the toolkit requires the full transition matrix to be provided, which can be infeasible for very large problems. 
 
 ### [pymdptoolbox](https://github.com/sawcordwell/pymdptoolbox)
-A Python library for solving MDPs that implements several classic algorithms including value iteration, policy iteration, and Q-learning. Related packages are available for MATLAB, GNU Octave, Scilab and R [(Chadès et al, 2014)](https://nsojournals.onlinelibrary.wiley.com/doi/full/10.1111/ecog.00888). pymdptoolbox does not support GPU-acceleration and, like the VFI Toolkit, requires the user to provide the full transition matrix for problems.
+A Python library for solving MDPs that implements several classic algorithms including value iteration, policy iteration, and Q-learning. Related packages are available for MATLAB, GNU Octave, Scilab and R [(Chadès et al. 2014)](https://nsojournals.onlinelibrary.wiley.com/doi/full/10.1111/ecog.00888). pymdptoolbox does not support GPU-acceleration and, like the VFI Toolkit, requires the user to provide the full transition matrix for problems.
 
 ## Acknowledgments
 
