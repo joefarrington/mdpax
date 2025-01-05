@@ -20,4 +20,4 @@ jobs:
           uv sync --all-extras --dev
       - name: Run tests
         run: |
-          JAX_PLATFORM_NAME=cpu uv run pytest tests -v -m "not slow"
+          JAX_PLATFORMS=cpu uv run pytest tests -v -m "not slow"
