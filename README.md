@@ -137,13 +137,13 @@ uv venv
 source .venv/bin/activate
 
 # Install development dependencies
-uv pip install -e ".[dev]"  # Using uv
+uv sync # Using uv
 
 # Install pre-commit hooks
-uv run pre-commit install
+pre-commit install
 
 # Run tests
-uv run pytest tests/
+pytest tests/
 ```
 
 The development environment includes:
