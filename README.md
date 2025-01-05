@@ -133,16 +133,16 @@ cd mdpax
 
 # Create a virtual environment
 uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 
 # Install development dependencies
 uv pip install -e ".[dev]"  # Using uv
 
 # Install pre-commit hooks
-pre-commit install
+uv run pre-commit install
 
 # Run tests
-pytest tests/
+uv run pytest tests/
 ```
 
 The development environment includes:
