@@ -42,13 +42,20 @@ MDPax can be installed from PyPI using pip:
 ```bash
 pip install mdpax
 ```
-For the complete list of dependencies and version requirements, see [`pyproject.toml`](https://github.com/joefarrington/mdpax/blob/main/pyproject.toml).
+If you want to run the [example notebooks](https://github.com/joefarrington/mdpax/tree/main/examples), install the additional dependencies with:
+```bash
+pip install "mdpax[examples]"
+```
 
 For GPU support, ensure your NVIDIA drivers and CUDA toolkit are compatible with JAX. See the [JAX installation guide](https://github.com/google/jax#installation) for details.
+
+See [`pyproject.toml`](https://github.com/joefarrington/mdpax/blob/main/pyproject.toml) for the complete list of dependencies and version requirements, 
 
 ### Google Colab
 
 You can try MDPax without any local installation using Google Colab, which provides free GPU access. See our Getting Started notebook for an interactive introduction. 
+
+To verify you're using a GPU in Colab, click Runtime > Change runtime type and ensure "GPU" is selected as the Hardware accelerator. You can confirm GPU availability by running `!nvidia-smi` in a code cell.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/joefarrington/mdpax/blob/main/examples/getting_started.ipynb)
 
