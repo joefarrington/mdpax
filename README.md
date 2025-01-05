@@ -1,5 +1,8 @@
 # MDPax
 
+[![Tests](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml/badge.svg)](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 MDPax is designed for researchers and practitioners who want to solve large Markov Decision Process (MDP) problems but don't want to become experts in graphics processing unit (GPU) programming. By using JAX, we can take advantage of the massive parallel processing power of GPUs while describing new problems using a simple Python interface.
 
 You can run MDPax on your local GPU, or try it for free using [Google Colab](https://colab.research.google.com/), which provides access to GPUs in the cloud with no setup required.

@@ -135,3 +135,4 @@ draft_notebooks
 .vscode
 
 notes.md
+.ruff_cache/
