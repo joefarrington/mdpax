@@ -1,4 +1,4 @@
-name: Publish Python distribution to TestPyPI
+name: Publish Python distribution to PyPI
 
 on:
   release:
@@ -31,18 +31,18 @@ jobs:
         name: python-package-distributions
         path: dist/
 
-  publish-to-testpypi:
-      name: Publish Python distribution to TestPyPI
+  publish-to-pypi:
+      name: Publish Python distribution to PyPI
       needs:
       - build
       runs-on: ubuntu-latest
 
       environment:
-        name: testpypi
-        url: https://test.pypi.org/p/mdpax
+        name: pypi
+        url: https://pypi.org/p/mdpax
 
       permissions:
-        id-token: write  # IMPORTANT: mandatory for trusted publishing
+        id-token: write
 
       steps:
       - name: Download all the dists
@@ -50,7 +50,5 @@ jobs:
         with:
           name: python-package-distributions
           path: dist/
-      - name: Publish distribution 📦 to TestPyPI
+      - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
