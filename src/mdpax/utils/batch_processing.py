@@ -86,7 +86,7 @@ class BatchProcessor:
         total_size = self.n_devices * self.n_batches * self.batch_size
         self.n_pad = total_size - n_states
 
-        logger.debug(f"Batch processor initialized with {self.n_devices} devices")
+        logger.debug(f"Batch processor initialized with {self.n_devices} device(s)")
         logger.debug(f"Batch size: {self.batch_size}")
         logger.debug(f"Number of batches per device: {self.n_batches}")
         logger.debug(f"Padding elements: {self.n_pad}")
