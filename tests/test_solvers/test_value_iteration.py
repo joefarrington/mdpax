@@ -143,6 +143,7 @@ def test_de_moor_matches_paper(
             "lifo",
             "de_moor_perishable_m3_exp5_visojax.csv",
             id="de_moor/m3/exp5",
+            marks=pytest.mark.slow,
         ),
     ],
 )

@@ -56,6 +56,7 @@ from mdpax.problems.perishable_inventory.de_moor_single_product import (
                 "n_random_events": 101,
             },
             id="de_moor/m5/exp8",
+            marks=pytest.mark.slow,
         ),
     ],
 )

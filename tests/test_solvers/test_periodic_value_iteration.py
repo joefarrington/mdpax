@@ -19,6 +19,7 @@ jax.config.update("jax_enable_x64", True)
         pytest.param(
             "mirjalili_m3_exp1_visojax.csv",
             id="mirjalili/m3/exp1",
+            marks=pytest.mark.slow,
         ),
     ],
 )

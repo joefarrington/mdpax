@@ -44,6 +44,7 @@ from mdpax.problems.perishable_inventory.hendrix_two_product import (
                 "n_random_events": 2_116,
             },
             id="hendrix/m3/exp1",
+            marks=pytest.mark.slow,
         ),
     ],
 )

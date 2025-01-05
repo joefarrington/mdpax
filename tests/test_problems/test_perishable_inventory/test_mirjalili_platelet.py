@@ -38,6 +38,7 @@ from mdpax.problems.perishable_inventory.mirjalili_platelet import (
                 "n_random_events": 1_115_730,
             },
             id="mirjalili/m5/exp1",
+            marks=pytest.mark.slow,
         ),
     ],
 )
