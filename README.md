@@ -56,9 +56,9 @@ See [`pyproject.toml`](https://github.com/joefarrington/mdpax/blob/main/pyprojec
 
 You can try MDPax without any local installation using Google Colab, which provides free GPU access. See our Getting Started notebook for an interactive introduction. 
 
-To verify you're using a GPU in Colab, click Runtime > Change runtime type and ensure "GPU" is selected as the Hardware accelerator. You can confirm GPU availability by running `!nvidia-smi` in a code cell.
-
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/joefarrington/mdpax/blob/main/examples/getting_started.ipynb)
+
+To verify you're using a GPU in Colab, click Runtime > Change runtime type and ensure "GPU" is selected as the Hardware accelerator. You can confirm GPU availability by running `!nvidia-smi` in a code cell.
 
 ## Quick Start
 
