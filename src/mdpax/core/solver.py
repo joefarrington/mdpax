@@ -84,31 +84,17 @@ class Solver(ABC):
     and batching infrastructure.
 
     Required Implementations:
-        _setup_solver() -> None:
-            Setup solver-specific data structures and functions.
-            Called after base initialization.
-
-        _iteration_step() -> tuple[ValueFunction, float]:
-            Perform one iteration of the solution algorithm.
-            Returns (new_values, convergence_measure).
+        - _setup_convergence_testing: Setup convergence testing functions and thresholds.
+        - _iteration_step: Perform one iteration of the solution algorithm.
 
     Optional Implementations:
-        _initialize_values(batched_states: BatchedStates) -> ValueFunction:
-            Initialize value function. Default uses problem's initial_value.
+        - _setup_additional_components:Hook for additional setup in derived classes.
 
     Shape Requirements:
         - Values: [n_states]
         - Policy: [n_states, action_dim]
         - Batched states: [n_devices, n_batches, batch_size, state_dim]
         - Batched results: [n_devices, n_batches, batch_size]
-
-    Args:
-        problem: MDP problem to solve
-        gamma: Discount factor in [0,1]
-        epsilon: Convergence threshold
-        max_batch_size: Maximum states to process in parallel on each device
-        jax_double_precision: Whether to use float64 precision
-        verbose: Logging verbosity level (0-4)
 
     Attributes:
         problem: Problem instance being solved

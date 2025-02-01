@@ -22,7 +22,7 @@ Solver
 
 .. autoclass:: mdpax.core.solver.Solver
    :members:
-   :private-members: _setup_convergence_testing, _iteration_step, _initialize_values
+   :private-members: _setup_convergence_testing, _iteration_step, _setup_additional_components
    :special-members: __init__
    :noindex:
 
