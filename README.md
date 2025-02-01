@@ -11,7 +11,7 @@ MDPax is designed for researchers and practitioners who want to solve large Mark
 You can run MDPax on your local GPU, or try it for free using [Google Colab](https://colab.research.google.com/), which provides access to GPUs in the cloud with no setup required.
 
 ## Key capabilities
-- Solve MDPs with millions of states using value iteration
+- Solve MDPs with millions of states using value iteration or policy iteration
 - Automatic support for one or more identical GPUs
 - Flexible interface for defining your own MDP problem or solver algorithm
 - Asynchronous checkpointing using [Orbax](https://orbax.readthedocs.io/en/latest/)
