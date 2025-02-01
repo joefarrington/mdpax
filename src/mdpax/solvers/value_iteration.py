@@ -132,10 +132,8 @@ class ValueIteration(Solver, CheckpointMixin):
 
     def _setup_jax_functions(self) -> None:
         """Set up JAX function transformations."""
-        # Call parent's setup first
         super()._setup_jax_functions()
 
-        # Set up value iteration specific functions
         self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_updated_value_scan_state_batches,
             in_axes=((None, None, None, None), 0),
