@@ -1,7 +1,5 @@
 """Semi-asynchronous value iteration solver with different batch ordering strategies."""
 
-from typing import Literal
-
 import chex
 import jax
 import jax.numpy as jnp
@@ -61,7 +59,7 @@ class SemiAsyncValueIterationConfig(SolverConfig):
     checkpoint_frequency: int = 0
     max_checkpoints: int = 1
     enable_async_checkpointing: bool = True
-    convergence_test: Literal["span", "max_diff"] = "span"
+    convergence_test: str = "span"
     shuffle_states: bool = False
     random_seed: int = 42
 
@@ -81,6 +79,8 @@ class SemiAsyncValueIterationConfig(SolverConfig):
             raise ValueError("max_checkpoints must be non-negative")
         if not 0 <= self.verbose <= 4:
             raise ValueError("verbose must be between 0 and 4")
+        if self.convergence_test not in ["span", "max_diff"]:
+            raise ValueError("Convergence test must be 'span' or 'max_diff'")
 
 
 @chex.dataclass(frozen=True)
