@@ -221,10 +221,9 @@ class Solver(ABC):
 
     def _initialize_solver_state_elements(self) -> None:
         """Initialize solver state elements."""
-        self.values = None
+        self.values = self._initialize_values(self.batched_states)
         self.policy = None
         self.iteration = 0
-        self.values = self._initialize_values(self.batched_states)
 
     def _setup_additional_components(self) -> None:
         """Hook for additional setup in derived classes."""
