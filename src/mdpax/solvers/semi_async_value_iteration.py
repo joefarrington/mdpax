@@ -132,50 +132,31 @@ class SemiAsyncValueIteration(ValueIteration):
         config: SemiAsyncValueIterationConfig | None = None,
         **kwargs,
     ):
-        """Initialize solver."""
+        """Initialize the solver."""
         super().__init__(problem=problem, config=config, **kwargs)
 
-        # Get config values
-        if config is not None:
-            self.config = config
-        else:
-            self.config = self.Config(**kwargs)
-
-        # Initialize batch ordering state
+    def _setup_config(
+        self, problem: Problem, config: SolverConfig | None = None, **kwargs
+    ) -> None:
+        super()._setup_config(problem, config, **kwargs)
         self.key = random.PRNGKey(self.config.random_seed)
-        self.batch_order = None
-        self.inverse_order = None
 
-        # Setup processing
-        self._setup()
-
-    def _setup_solver(self) -> None:
-        """Setup solver-specific computations."""
-        self._setup_convergence_test()
+    def _setup_jax_functions(self) -> None:
+        super()._setup_jax_functions()
 
         # JIT compile core computations
         self._jitted_calculate_updated_state_action_value = jax.jit(
             self._calculate_updated_state_action_value, static_argnums=(0,)
         )
 
-        # Pmap the batch processing for parallel execution
-        self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
-            self._calculate_updated_value_scan_state_batches,
-            in_axes=(
-                (None, None, None, None),
-                (0, 0),
-            ),  # (actions, random_events, gamma, values), (batched_states, padding_mask)
-        )
-
-        # Pmap policy extraction for parallel execution
-        self._extract_policy_idx_scan_state_batches_pmap = jax.pmap(
-            self._extract_policy_idx_scan_state_batches,
-            in_axes=((None, None, None, None), 0),
-        )
-
         # JIT compile state shuffling functions
         self._jitted_shuffle_states = jax.jit(self._shuffle_states)
         self._jitted_reorder_values = jax.jit(self._reorder_values)
+
+    def _initialize_solver_state_elements(self) -> None:
+        super()._initialize_solver_state_elements()
+        self.batch_order = None
+        self.inverse_order = None
 
     def _shuffle_states(
         self, key: jnp.ndarray

@@ -1,11 +1,8 @@
 """Value iteration solver for MDPs."""
 
-from enum import Enum
-
 import jax
 import jax.numpy as jnp
 from hydra.conf import dataclass
-from hydra.utils import instantiate
 from jaxtyping import Array, Float
 from loguru import logger
 
@@ -26,18 +23,6 @@ from mdpax.utils.types import (
     StateVector,
     ValueFunction,
 )
-
-
-class ConvergenceTest(str, Enum):
-    """Type of convergence test to use.
-
-    Attributes:
-        SPAN: Use span convergence test (like pymdptoolbox)
-        MAX_DIFF: Use maximum absolute difference convergence test
-    """
-
-    SPAN = "span"
-    MAX_DIFF = "max_diff"
 
 
 @dataclass
@@ -143,62 +128,26 @@ class ValueIteration(Solver, CheckpointMixin):
         **kwargs,
     ):
         """Initialize the solver."""
-        if config is not None:
-            self.config = config
-        else:
-            self.config = self.Config(**kwargs)
+        super().__init__(problem, config, **kwargs)
 
-        # Handle problem instance vs config
-        if problem is not None:
-            # If given a Problem instance directly, store
-            # config, if it has one
-            if hasattr(problem, "config"):
-                self.config.problem = problem.config
-        else:
-            # If no problem instance, must have config
-            if self.config.problem is None:
-                raise ValueError("Must provide either problem instance or config")
-            problem = instantiate(self.config.problem)
+    def _setup_jax_functions(self) -> None:
+        """Set up JAX function transformations."""
+        # Call parent's setup first
+        super()._setup_jax_functions()
 
-        super().__init__(
-            problem,
-            self.config.gamma,
-            self.config.epsilon,
-            self.config.max_batch_size,
-            self.config.jax_double_precision,
-            self.config.verbose,
-        )
-        self._setup_checkpointing(
-            self.config.checkpoint_dir,
-            self.config.checkpoint_frequency,
-            max_checkpoints=self.config.max_checkpoints,
-            enable_async_checkpointing=self.config.enable_async_checkpointing,
-        )
-
-    def _setup_solver(self) -> None:
-        """Setup solver-specific data structures and functions.
-
-        Sets up pmapped functions for parallel value updates and policy extraction
-
-        Returns:
-            None
-        """
-        self._setup_convergence_test()
-
-        # Pmap the batch processing for parallel execution
+        # Set up value iteration specific functions
         self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_updated_value_scan_state_batches,
             in_axes=((None, None, None, None), 0),
         )
 
-        # Pmap policy extraction for parallel execution
         self._extract_policy_idx_scan_state_batches_pmap = jax.pmap(
             self._extract_policy_idx_scan_state_batches,
             in_axes=((None, None, None, None), 0),
         )
 
-    def _setup_convergence_test(self) -> None:
-        """Setup convergence test.
+    def _setup_convergence_testing(self) -> None:
+        """Setup convergence test and threshold
 
         For both span and max_diff convergence tests, the convergence threshold is
         computed as:
@@ -226,6 +175,15 @@ class ValueIteration(Solver, CheckpointMixin):
 
         # Get convergence format for logging convergence metrics
         self.convergence_format = get_convergence_format(float(self.conv_threshold))
+
+    def _setup_additional_components(self) -> None:
+        """Set up additional components (checkpointing)."""
+        self._setup_checkpointing(
+            self.config.checkpoint_dir,
+            self.config.checkpoint_frequency,
+            max_checkpoints=self.config.max_checkpoints,
+            enable_async_checkpointing=self.config.enable_async_checkpointing,
+        )
 
     def _get_value_next_state(
         self, next_state: StateVector, values: Float[Array, "n_states"]

@@ -126,25 +126,31 @@ class PolicyIteration(ValueIteration):
     ):
         """Initialize the solver."""
         super().__init__(problem=problem, config=config, **kwargs)
-        # Store for policy evaluation resets
-        self.initial_values = self.values
-        # Get initial policy
-        self.policy = self._initialize_policy()
 
-    def _setup_solver(self) -> None:
-        """Setup solver-specific data structures and functions."""
-        self._setup_convergence_test()
-
-        # Pmap the batch processing for parallel policy evaluation
+    def _setup_jax_functions(self) -> None:
+        """Setup JAX functions for policy iteration."""
+        super()._setup_jax_functions()
         self._calculate_policy_values_scan_state_batches_pmap = jax.pmap(
             self._calculate_policy_values_scan_state_batches,
             in_axes=((None, None, None, None, None), 0),
         )
-        # Pmap policy extraction for parallel execution
+
         self._extract_policy_idx_scan_state_batches_pmap = jax.pmap(
             self._extract_policy_idx_scan_state_batches,
             in_axes=((None, None, None, None), 0),
         )
+
+    def _initialize_solver_state_elements(self) -> None:
+        """Initialize solver state elements."""
+        # Set values to zero for policy initialization
+        self.values = jnp.zeros(self.problem.n_states)
+        self.policy = self._initialize_policy()
+        self.values = self._initialize_values(self.batched_states)
+
+        if self.config.reset_values_for_each_policy_eval:
+            # store initial values for policy evaluation resets
+            self.initial_values = self.values
+        self.iteration = 0
 
     def _initialize_policy(self) -> Policy:
         """Initialize policy as custom policy or by maximizing immediate reward.
@@ -159,14 +165,8 @@ class PolicyIteration(ValueIteration):
             )
         except NotImplementedError:
 
-            # Temporarily set values to zero for policy extraction
-            self.values = jnp.zeros_like(self.initial_values)
-
             # Extract policy using zero values (maximizes immediate reward)
             initial_policy = self._extract_policy()
-
-            # Restore initial values for policy evaluation
-            self.values = self.initial_values
 
         return initial_policy
 
@@ -348,7 +348,7 @@ class PolicyIteration(ValueIteration):
 
             # Log progress
             logger.info(
-                f"Iteration {self.iteration}: Policy updated for {n_changed} states ({n_changed/self.problem.n_states*100:.2f}%)"
+                f"Iteration {self.iteration}: Policy updated for {n_changed} state(s) ({n_changed/self.problem.n_states*100:.2f}%)"
             )
 
             # Check for convergence

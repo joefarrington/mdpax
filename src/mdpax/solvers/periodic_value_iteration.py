@@ -152,17 +152,16 @@ class PeriodicValueIteration(ValueIteration):
         """Initialize solver."""
         super().__init__(problem=problem, config=config, **kwargs)
 
-        self.period = self.config.period
+    def _setup_config(
+        self, problem: Problem, config: SolverConfig | None = None, **kwargs
+    ) -> None:
+        super()._setup_config(problem, config, **kwargs)
         self.clear_value_history_on_convergence = (
             self.config.clear_value_history_on_convergence
         )
+        self.period = self.config.period
 
-        # Initialize value history in CPU memory
-        self.value_history = np.zeros((self.period + 1, self.problem.n_states))
-        self.history_index: int = 0
-        self.value_history[0] = np.array(self.values)
-
-    def _setup_convergence_test(self) -> None:
+    def _setup_convergence_testing(self) -> None:
         """Setup convergence test.
 
         For periodic value iteration, we use the span of differences over a period
@@ -174,6 +173,14 @@ class PeriodicValueIteration(ValueIteration):
         self._convergence_desc = "period_span"
         # Get convergence format for logging convergence metrics
         self.convergence_format = get_convergence_format(float(self.conv_threshold))
+
+    def _initialize_solver_state_elements(self) -> None:
+        """Initialize solver state elements."""
+        super()._initialize_solver_state_elements()
+        # Initialize value history in CPU memory
+        self.value_history = np.zeros((self.period + 1, self.problem.n_states))
+        self.history_index: int = 0
+        self.value_history[0] = np.array(self.values)
 
     def _get_periodic_span(
         self,

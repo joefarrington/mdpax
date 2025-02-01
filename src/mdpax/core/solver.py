@@ -33,8 +33,10 @@ class SolverConfig:
     """
 
     _target_: str = MISSING
-    gamma: float = MISSING
+
     problem: ProblemConfig = MISSING
+    gamma: float = MISSING
+    epsilon: float = MISSING
     max_batch_size: int = MISSING
     jax_double_precision: bool = MISSING
     verbose: int = MISSING
@@ -131,73 +133,70 @@ class Solver(ABC):
 
     def __init__(
         self,
-        problem: Problem,
-        gamma: float = 0.99,
-        epsilon: float = 1e-3,
-        max_batch_size: int = 1024,
-        jax_double_precision: bool = True,
-        verbose: int = 2,
+        problem: Problem | None = None,
+        config: SolverConfig | None = None,
+        **kwargs,
     ):
-        if not isinstance(problem, Problem):
-            raise TypeError("problem must be an instance of Problem")
-        assert 0 <= gamma <= 1, "Discount factor must be in [0,1]"
-        assert epsilon > 0, "Epsilon must be positive"
-        assert max_batch_size > 0, "Batch size must be positive"
+        # Phase 1: Configuration and core attributes
+        self._setup_config(problem, config, **kwargs)
 
-        self.jax_double_precision = jax_double_precision
+        # Phase 2: Set up batch processing for parallel computation
+        self._setup_batch_processing()
+
+        # Phase 3: Set up JAX function transformations
+        self._setup_jax_functions()
+
+        # Phase 4: Set up convergence testing
+        self._setup_convergence_testing()
+
+        # Phase 5: Initialize solver state elements
+        self._initialize_solver_state_elements()
+
+        # Phase 6: Additional setup (hook for derived classes)
+        self._setup_additional_components()
+
+    def _setup_config(
+        self, problem: Problem, config: SolverConfig | None = None, **kwargs
+    ) -> None:
+        """Set up configuration and core attributes."""
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self.Config(**kwargs)
+
+        # Handle problem instance vs config
+        if problem is not None:
+            # If given a Problem instance directly, store
+            # config, if it has one
+            if hasattr(problem, "config"):
+                self.config.problem = problem.config
+            self.problem = problem
+        else:
+            # If no problem instance, must have config
+            if self.config.problem is None:
+                raise ValueError("Must provide either problem instance or config")
+            self.problem = instantiate(self.config.problem)
+
+        # Store core attributes
+        self.gamma = jnp.array(self.config.gamma)
+        self.epsilon = self.config.epsilon
+        self.max_batch_size = self.config.max_batch_size
+
+        # Set up precision
+        self.jax_double_precision = self.config.jax_double_precision
         if self.jax_double_precision:
             jax.config.update("jax_enable_x64", True)
 
-        self.max_batch_size = max_batch_size
-        self.problem = problem
-        self.gamma = jnp.array(gamma)
-        self.epsilon = epsilon
-
-        # Set initial verbosity
-        self.set_verbosity(verbose)
+        # Set up logging
+        self.set_verbosity(self.config.verbose)
 
         logger.info(f"Solver initialized with {problem.name} problem")
         logger.debug(f"Number of states: {problem.n_states}")
         logger.debug(f"Number of actions: {problem.n_actions}")
         logger.debug(f"Number of random events: {problem.n_random_events}")
 
-        # Setup batch processing and solver-specific structures
-        # and JIT compile functions (as part of pmap)
-        self._setup()
-
-    def set_verbosity(self, level: int | str) -> None:
-        """Set the verbosity level for solver output.
-
-        Args:
-            level: Verbosity level, either as integer (0-4) or string
-                  ('ERROR', 'WARNING', 'INFO', 'DEBUG', 'TRACE')
-
-        Integer levels map to:
-            - 0: Minimal output (only errors)
-            - 1: Show warnings and errors
-            - 2: Show main progress (default)
-            - 3: Show detailed progress
-            - 4: Show everything
-        """
-        # Handle string input
-        if isinstance(level, str):
-            level = level.upper()
-            valid_levels = {"ERROR": 0, "WARNING": 1, "INFO": 2, "DEBUG": 3, "TRACE": 4}
-            if level not in valid_levels:
-                raise ValueError(f"Invalid verbosity level: {level}")
-            level = valid_levels[level]
-
-        # Convert to loguru level
-        loguru_level = verbosity_to_loguru_level(level)
-        logger.remove()
-        logger.add(sys.stderr, level=loguru_level)
-        self.verbose = level
-
-        logger.debug(f"Verbosity set to {level} ({loguru_level})")
-
-    def _setup(self) -> None:
-        """Setup batching and solver computations and JIT compile functions."""
-
+    def _setup_batch_processing(self) -> None:
+        """Set up batching for parallel processing."""
         # Set up batch processing
         self.batch_processor = BatchProcessor(
             n_states=self.problem.n_states,
@@ -205,23 +204,31 @@ class Solver(ABC):
             max_batch_size=self.max_batch_size,
         )
 
-        self.batched_states: BatchedStates = self.batch_processor.prepare_batches(
+        self.batched_states = self.batch_processor.prepare_batches(
             self.problem.state_space
         )
 
-        # Initialize solver state
-        self.values: ValueFunction | None = None
-        self.policy: Policy | None = None
-        self.iteration: int = 0
-
+    def _setup_jax_functions(self) -> None:
+        """Set up JAX function transformations."""
         self._calculate_initial_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_initial_value_scan_state_batches, in_axes=0
         )
 
-        # Setup other solver-specific computations
-        self._setup_solver()
-        # Initialize values using solver-specific method
+    @abstractmethod
+    def _setup_convergence_testing(self) -> None:
+        """Set up convergence testing functions and thresholds."""
+        pass
+
+    def _initialize_solver_state_elements(self) -> None:
+        """Initialize solver state elements."""
+        self.values = None
+        self.policy = None
+        self.iteration = 0
         self.values = self._initialize_values(self.batched_states)
+
+    def _setup_additional_components(self) -> None:
+        """Hook for additional setup in derived classes."""
+        pass
 
     def _initialize_values(self, batched_states: BatchedStates) -> ValueFunction:
         """Initialize value function using problem's initial value function."""
@@ -255,15 +262,6 @@ class Solver(ABC):
             padded_batched_states,
         )
         return padded_batched_initial_values
-
-    @abstractmethod
-    def _setup_solver(self) -> None:
-        """Setup solver-specific data structures and functions.
-
-        Returns:
-            None
-        """
-        pass
 
     @abstractmethod
     def _iteration_step(self) -> tuple[ValueFunction, float]:
@@ -323,3 +321,33 @@ class Solver(ABC):
     def n_pad(self) -> int:
         """Number of padding elements added."""
         return self.batch_processor.n_pad
+
+    def set_verbosity(self, level: int | str) -> None:
+        """Set the verbosity level for solver output.
+
+        Args:
+            level: Verbosity level, either as integer (0-4) or string
+                  ('ERROR', 'WARNING', 'INFO', 'DEBUG', 'TRACE')
+
+        Integer levels map to:
+            - 0: Minimal output (only errors)
+            - 1: Show warnings and errors
+            - 2: Show main progress (default)
+            - 3: Show detailed progress
+            - 4: Show everything
+        """
+        # Handle string input
+        if isinstance(level, str):
+            level = level.upper()
+            valid_levels = {"ERROR": 0, "WARNING": 1, "INFO": 2, "DEBUG": 3, "TRACE": 4}
+            if level not in valid_levels:
+                raise ValueError(f"Invalid verbosity level: {level}")
+            level = valid_levels[level]
+
+        # Convert to loguru level
+        loguru_level = verbosity_to_loguru_level(level)
+        logger.remove()
+        logger.add(sys.stderr, level=loguru_level)
+        self.verbose = level
+
+        logger.debug(f"Verbosity set to {level} ({loguru_level})")
