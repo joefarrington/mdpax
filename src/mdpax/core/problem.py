@@ -241,10 +241,8 @@ class Problem(ABC):
     def initial_value(self, state: StateVector) -> float:
         """Return initial value estimate for a given state.
 
-        This method defines how to initialize the value function for a single state.
-        The solver will handle vectorization over all states efficiently.
-
-        By default, this method returns 0.0 for all states.
+        By default returns 0.0 for all states. Override this method to provide
+        problem-specific initial value estimates.
 
         Args:
             state: State vector [state_dim]
@@ -253,6 +251,23 @@ class Problem(ABC):
             Initial value estimate for the given state
         """
         return 0.0
+
+    def initial_policy(self, state: StateVector) -> ActionVector:
+        """Get initial policy for a state.
+
+        By default, raises NotImplementedError to indicate no custom policy is defined.
+        Can be overridden to provide a custom initial policy.
+
+        Args:
+            state: Current state vector [state_dim]
+
+        Returns:
+            Initial action vector [action_dim] for the state
+
+        Raises:
+            NotImplementedError: If no custom initial policy is defined
+        """
+        raise NotImplementedError("No custom initial policy defined")
 
     def build_transition_and_reward_matrices(
         self, normalization_tolerance: float = 1e-4

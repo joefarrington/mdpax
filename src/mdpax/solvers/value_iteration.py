@@ -1,6 +1,6 @@
 """Value iteration solver for MDPs."""
 
-from typing import Literal
+from enum import Enum
 
 import jax
 import jax.numpy as jnp
@@ -24,7 +24,20 @@ from mdpax.utils.types import (
     RandomEventSpace,
     StateBatch,
     StateVector,
+    ValueFunction,
 )
+
+
+class ConvergenceTest(str, Enum):
+    """Type of convergence test to use.
+
+    Attributes:
+        SPAN: Use span convergence test (like pymdptoolbox)
+        MAX_DIFF: Use maximum absolute difference convergence test
+    """
+
+    SPAN = "span"
+    MAX_DIFF = "max_diff"
 
 
 @dataclass
@@ -76,7 +89,7 @@ class ValueIterationConfig(SolverConfig):
     checkpoint_frequency: int = 0
     max_checkpoints: int = 1
     enable_async_checkpointing: bool = True
-    convergence_test: Literal["span", "max_diff"] = "span"
+    convergence_test: str = "span"
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -94,6 +107,8 @@ class ValueIterationConfig(SolverConfig):
             raise ValueError("max_checkpoints must be non-negative")
         if not 0 <= self.verbose <= 4:
             raise ValueError("verbose must be between 0 and 4")
+        if self.convergence_test not in ["span", "max_diff"]:
+            raise ValueError("Convergence test must be 'span' or 'max_diff'")
 
 
 class ValueIteration(Solver, CheckpointMixin):
@@ -103,9 +118,12 @@ class ValueIteration(Solver, CheckpointMixin):
     across devices. States are automatically batched and padded for efficient
     parallel processing.
 
-    Convergence testing follows pymdptoolbox, testing the span of differences
-    in values instead of the maximum absolute difference. The convergence
-    threshold is adjusted for the discount factor gamma.
+    Convergence testing uses the span of differences in values by default
+    (convergence_test='span'). If the value function is needed for further analysis,
+    use convergence_test='max_diff' to test the maximum absolute difference between
+    successive iterations.
+
+    The default settings match the behaviour of pymdptoolbox's ValueIteration class.
 
     Supports checkpointing for long-running problems using the CheckpointMixin.
 
@@ -156,44 +174,16 @@ class ValueIteration(Solver, CheckpointMixin):
             max_checkpoints=self.config.max_checkpoints,
             enable_async_checkpointing=self.config.enable_async_checkpointing,
         )
-        self.policy = None
 
     def _setup_solver(self) -> None:
         """Setup solver-specific data structures and functions.
 
-        Sets up:
-            - Convergence threshold based on gamma and epsilon
-            - Convergence logging format
-            - Pmapped functions for parallel value updates and policy extraction
-
-        For the span convergence test, the convergence threshold is
-        computed as:
-            - epsilon if gamma == 1
-            - epsilon * (1 - gamma) / gamma otherwise
-        following mdptoolbox's implementation.
-
-        For the max_diff convergence test, the convergence threshold is
-        simply epsilon.
+        Sets up pmapped functions for parallel value updates and policy extraction
 
         Returns:
             None
         """
-        # Select convergence test function and threshold
-        convergence_tests = {
-            "span": (
-                self._get_span,
-                "span",
-                lambda eps, gamma: eps * (1 - gamma) / gamma,
-            ),
-            "max_diff": (self._get_max_diff, "max delta", lambda eps, gamma: eps),
-        }
-        self._convergence_test_fn, self._convergence_desc, threshold_fn = (
-            convergence_tests[self.config.convergence_test]
-        )
-        self.conv_threshold = threshold_fn(self.epsilon, self.gamma)
-
-        # Get convergence format for logging convergence metrics
-        self.convergence_format = get_convergence_format(float(self.conv_threshold))
+        self._setup_convergence_test()
 
         # Pmap the batch processing for parallel execution
         self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
@@ -206,6 +196,36 @@ class ValueIteration(Solver, CheckpointMixin):
             self._extract_policy_idx_scan_state_batches,
             in_axes=((None, None, None, None), 0),
         )
+
+    def _setup_convergence_test(self) -> None:
+        """Setup convergence test.
+
+        For both span and max_diff convergence tests, the convergence threshold is
+        computed as:
+            - epsilon if gamma == 1
+            - epsilon * (1 - gamma) / gamma otherwise
+        following mdptoolbox's implementation.
+        """
+        # Select convergence test function and threshold
+        convergence_tests = {
+            "span": (
+                self._get_span,
+                "span",
+                lambda eps, gamma: eps * (1 - gamma) / gamma if gamma != 1 else eps,
+            ),
+            "max_diff": (
+                self._get_max_diff,
+                "max delta",
+                lambda eps, gamma: eps * (1 - gamma) / gamma if gamma != 1 else eps,
+            ),
+        }
+        self._convergence_test_fn, self._convergence_desc, threshold_fn = (
+            convergence_tests[self.config.convergence_test]
+        )
+        self.conv_threshold = threshold_fn(self.epsilon, self.gamma)
+
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(float(self.conv_threshold))
 
     def _get_value_next_state(
         self, next_state: StateVector, values: Float[Array, "n_states"]
@@ -405,7 +425,9 @@ class ValueIteration(Solver, CheckpointMixin):
         return best_action_idxs_padded
 
     def _get_span(
-        self, new_values: Float[Array, "n_states"], old_values: Float[Array, "n_states"]
+        self,
+        new_values: ValueFunction,
+        old_values: ValueFunction,
     ) -> float:
         """Get the span of differences in values.
 
@@ -424,7 +446,9 @@ class ValueIteration(Solver, CheckpointMixin):
         return jnp.max(delta) - jnp.min(delta)
 
     def _get_max_diff(
-        self, new_values: Float[Array, "n_states"], old_values: Float[Array, "n_states"]
+        self,
+        new_values: ValueFunction,
+        old_values: ValueFunction,
     ) -> float:
         """Get the maximum absolute difference between value functions.
 
@@ -437,7 +461,7 @@ class ValueIteration(Solver, CheckpointMixin):
         """
         return jnp.max(jnp.abs(new_values - old_values))
 
-    def _iteration_step(self) -> tuple[Float[Array, "n_states"], float]:
+    def _iteration_step(self) -> tuple[ValueFunction, float]:
         """Perform one iteration of the solution algorithm.
 
         Returns:

@@ -128,9 +128,15 @@ class RelativeValueIteration(ValueIteration):
         """Initialize solver."""
 
         super().__init__(problem=problem, config=config, **kwargs)
-        # Get convergence format for logging convergence metrics
-        self.convergence_format = get_convergence_format(self.config.epsilon)
         self.gain = 0.0
+
+    def _setup_convergence_test(self) -> None:
+        """Setup convergence test."""
+        self._convergence_test_fn = self._get_span
+        self.conv_threshold = self.epsilon
+        self._convergence_desc = "span"
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(float(self.conv_threshold))
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
         """Perform one iteration of the solution algorithm.

@@ -220,7 +220,6 @@ class Solver(ABC):
 
         # Setup other solver-specific computations
         self._setup_solver()
-
         # Initialize values using solver-specific method
         self.values = self._initialize_values(self.batched_states)
 

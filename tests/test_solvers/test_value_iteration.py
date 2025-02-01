@@ -17,28 +17,47 @@ jax.config.update("jax_enable_x64", True)
 
 
 @pytest.mark.parametrize(
-    "params",
+    "params,convergence_test",
     [
         pytest.param(
             {"S": 3, "r1": 4.0, "r2": 2.0, "p": 0.1},
-            id="forest/default",
+            "span",
+            id="forest/default/span",
+        ),
+        pytest.param(
+            {"S": 3, "r1": 4.0, "r2": 2.0, "p": 0.1},
+            "max_diff",
+            id="forest/default/max_diff",
         ),
         pytest.param(
             {"S": 5, "r1": 10.0, "r2": 5.0, "p": 0.05},
-            id="forest/large_rewards",
+            "span",
+            id="forest/large_rewards/span",
+        ),
+        pytest.param(
+            {"S": 5, "r1": 10.0, "r2": 5.0, "p": 0.05},
+            "max_diff",
+            id="forest/large_rewards/max_diff",
         ),
         pytest.param(
             {"S": 4, "r1": 2.0, "r2": 8.0, "p": 0.2},
-            id="forest/high_risk",
+            "span",
+            id="forest/high_risk/span",
+        ),
+        pytest.param(
+            {"S": 4, "r1": 2.0, "r2": 8.0, "p": 0.2},
+            "max_diff",
+            id="forest/high_risk/max_diff",
         ),
     ],
 )
-def test_forest_matches_pymdptoolbox(params):
+def test_forest_matches_pymdptoolbox(params, convergence_test):
     """Test policy matches pymdptoolbox implementation.
 
-    Verifies that our implementation produces the same policies and values as
-    pymdptoolbox, with the same number of iterations, for the Forest Management
-    problem under different parameter settings.
+    Verifies that our implementation produces the same policies as pymdptoolbox.
+    When using span convergence (like pymdptoolbox), also verifies that values
+    and number of iterations match. When using max_diff convergence, only
+    verifies that the final policy matches since the convergence path will differ.
     """
     # Get matrices from both implementations
     P, R = mdptoolbox.example.forest(**params)
@@ -49,26 +68,30 @@ def test_forest_matches_pymdptoolbox(params):
     pymdptoolbox_iter = vi.iter
 
     forest = Forest(**params)
-    solver = ValueIteration(forest, gamma=0.9, epsilon=0.01, verbose=0)
+    solver = ValueIteration(
+        forest, gamma=0.9, epsilon=0.01, verbose=0, convergence_test=convergence_test
+    )
     result = solver.solve()
     mdpax_policy = result.policy.reshape(-1)
     mdpax_values = result.values.reshape(-1)
     mdpax_iter = result.info.iteration
 
-    # Policy comparison (integer arrays)
+    # Policy comparison (integer arrays) - always check this
     assert jnp.array_equal(
         mdpax_policy, pymdptoolbox_policy
     ), "Policy doesn't match pymdptoolbox"
 
-    # Values comparison (float arrays)
-    assert mdpax_values == pytest.approx(
-        pymdptoolbox_values, rel=1e-5
-    ), "Values don't match pymdptoolbox"
+    # Only compare values and iterations when using span convergence (like pymdptoolbox)
+    if convergence_test == "span":
+        # Values comparison (float arrays)
+        assert mdpax_values == pytest.approx(
+            pymdptoolbox_values, rel=1e-5
+        ), "Values don't match pymdptoolbox"
 
-    # Iteration comparison (integers)
-    assert (
-        mdpax_iter == pymdptoolbox_iter
-    ), "Number of iterations doesn't match pymdptoolbox"
+        # Iteration comparison (integers)
+        assert (
+            mdpax_iter == pymdptoolbox_iter
+        ), "Number of iterations doesn't match pymdptoolbox"
 
 
 @pytest.mark.parametrize(
