@@ -89,8 +89,8 @@ class PolicyIteration(ValueIteration):
     States are automatically batched and padded for efficient parallel processing.
 
     The algorithm alternates between:
-    1. Policy evaluation - computing values for current policy using iterative method with batched updates
-    2. Policy improvement - one-step lookahead to find better policy
+        1. Policy evaluation: computing values for current policy using iterative method with batched updates
+        2. Policy improvement: one-step lookahead to find better policy
 
     The algorithm is considered to have converged when the policy does not change between successive
     iterations. For each iteration, the convergence of policy evaluation is tested using the span
@@ -102,10 +102,10 @@ class PolicyIteration(ValueIteration):
 
     To match the behaviour of pymdptoolbox's PolicyIteration class (with iterative evaluation)
     use the following arguments:
-    - reset_values_for_each_policy_eval=True
-    - convergence_test='max_diff'
-    - max_eval_iter=10000
-    - epsilon=1e-4
+        - reset_values_for_each_policy_eval=True
+        - convergence_test='max_diff'
+        - max_eval_iter=10000
+        - epsilon=1e-4
 
     Supports checkpointing for long-running problems using the CheckpointMixin.
 
