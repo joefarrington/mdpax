@@ -1,6 +1,6 @@
 [project]
 name = "mdpax"
-version = "0.1.0"
+version = "0.2.0"
 description = "GPU-accelerated MDP solvers in Python with JAX"
 authors = [{name = "Joe Farrington", email = "farrington.joe@gmail.com"}]
 license = { text = "MIT" }
