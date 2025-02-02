@@ -3,7 +3,6 @@
 import jax
 import jax.numpy as jnp
 from hydra.conf import dataclass
-from hydra.utils import instantiate
 from jaxtyping import Array, Float
 from loguru import logger
 
@@ -22,6 +21,7 @@ from mdpax.utils.types import (
     RandomEventSpace,
     StateBatch,
     StateVector,
+    ValueFunction,
 )
 
 
@@ -46,6 +46,7 @@ class ValueIterationConfig(SolverConfig):
         checkpoint_frequency: How often to save checkpoints (must be non-negative, 0 to disable)
         max_checkpoints: Maximum number of checkpoints to keep (must be non-negative)
         enable_async_checkpointing: Whether to save checkpoints asynchronously
+        convergence_test: Strategy for testing convergence ("span" or "max_diff")
 
     Example:
         >>> # Using a Problem instance with config
@@ -73,6 +74,7 @@ class ValueIterationConfig(SolverConfig):
     checkpoint_frequency: int = 0
     max_checkpoints: int = 1
     enable_async_checkpointing: bool = True
+    convergence_test: str = "span"
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -90,6 +92,8 @@ class ValueIterationConfig(SolverConfig):
             raise ValueError("max_checkpoints must be non-negative")
         if not 0 <= self.verbose <= 4:
             raise ValueError("verbose must be between 0 and 4")
+        if self.convergence_test not in ["span", "max_diff"]:
+            raise ValueError("Convergence test must be 'span' or 'max_diff'")
 
 
 class ValueIteration(Solver, CheckpointMixin):
@@ -99,9 +103,12 @@ class ValueIteration(Solver, CheckpointMixin):
     across devices. States are automatically batched and padded for efficient
     parallel processing.
 
-    Convergence testing follows pymdptoolbox, testing the span of differences
-    in values instead of the maximum absolute difference. The convergence
-    threshold is adjusted for the discount factor gamma.
+    Convergence testing uses the span of differences in values by default
+    (convergence_test='span'). If the value function is needed for further analysis,
+    use convergence_test='max_diff' to test the maximum absolute difference between
+    successive iterations.
+
+    The default settings match the behaviour of pymdptoolbox's ValueIteration class.
 
     Supports checkpointing for long-running problems using the CheckpointMixin.
 
@@ -121,64 +128,11 @@ class ValueIteration(Solver, CheckpointMixin):
         **kwargs,
     ):
         """Initialize the solver."""
-        if config is not None:
-            self.config = config
-        else:
-            self.config = self.Config(**kwargs)
+        super().__init__(problem, config, **kwargs)
 
-        # Handle problem instance vs config
-        if problem is not None:
-            # If given a Problem instance directly, store
-            # config, if it has one
-            if hasattr(problem, "config"):
-                self.config.problem = problem.config
-        else:
-            # If no problem instance, must have config
-            if self.config.problem is None:
-                raise ValueError("Must provide either problem instance or config")
-            problem = instantiate(self.config.problem)
-
-        super().__init__(
-            problem,
-            self.config.gamma,
-            self.config.epsilon,
-            self.config.max_batch_size,
-            self.config.jax_double_precision,
-            self.config.verbose,
-        )
-        self._setup_checkpointing(
-            self.config.checkpoint_dir,
-            self.config.checkpoint_frequency,
-            max_checkpoints=self.config.max_checkpoints,
-            enable_async_checkpointing=self.config.enable_async_checkpointing,
-        )
-        self.policy = None
-
-    def _setup_solver(self) -> None:
-        """Setup solver-specific data structures and functions.
-
-        Sets up:
-            - Convergence threshold based on gamma and epsilon
-            - Convergence logging format
-            - Pmapped functions for parallel value updates and policy extraction
-
-        The convergence threshold is computed as:
-            - epsilon if gamma == 1
-            - epsilon * (1 - gamma) / gamma otherwise
-        following mdptoolbox's implementation.
-
-        Returns:
-            None
-        """
-
-        self._thresh = (
-            self.epsilon
-            if self.gamma == 1
-            else self.epsilon * (1 - self.gamma) / self.gamma
-        )
-
-        # Get convergence format for logging convergence metrics
-        self.convergence_format = get_convergence_format(float(self._thresh))
+    def _setup_jax_functions(self) -> None:
+        """Set up JAX function transformations."""
+        super()._setup_jax_functions()
 
         self._calculate_updated_value_scan_state_batches_pmap = jax.pmap(
             self._calculate_updated_value_scan_state_batches,
@@ -188,6 +142,45 @@ class ValueIteration(Solver, CheckpointMixin):
         self._extract_policy_idx_scan_state_batches_pmap = jax.pmap(
             self._extract_policy_idx_scan_state_batches,
             in_axes=((None, None, None, None), 0),
+        )
+
+    def _setup_convergence_testing(self) -> None:
+        """Setup convergence test and threshold
+
+        For both span and max_diff convergence tests, the convergence threshold is
+        computed as:
+            - epsilon if gamma == 1
+            - epsilon * (1 - gamma) / gamma otherwise
+        following mdptoolbox's implementation.
+        """
+        # Select convergence test function and threshold
+        convergence_tests = {
+            "span": (
+                self._get_span,
+                "span",
+                lambda eps, gamma: eps * (1 - gamma) / gamma if gamma != 1 else eps,
+            ),
+            "max_diff": (
+                self._get_max_diff,
+                "max delta",
+                lambda eps, gamma: eps * (1 - gamma) / gamma if gamma != 1 else eps,
+            ),
+        }
+        self._convergence_test_fn, self._convergence_desc, threshold_fn = (
+            convergence_tests[self.config.convergence_test]
+        )
+        self.conv_threshold = threshold_fn(self.epsilon, self.gamma)
+
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(float(self.conv_threshold))
+
+    def _setup_additional_components(self) -> None:
+        """Set up additional components (checkpointing)."""
+        self._setup_checkpointing(
+            self.config.checkpoint_dir,
+            self.config.checkpoint_frequency,
+            max_checkpoints=self.config.max_checkpoints,
+            enable_async_checkpointing=self.config.enable_async_checkpointing,
         )
 
     def _get_value_next_state(
@@ -387,30 +380,10 @@ class ValueIteration(Solver, CheckpointMixin):
         )
         return best_action_idxs_padded
 
-    def _iteration_step(self) -> tuple[Float[Array, "n_states"], float]:
-        """Perform one iteration of the solution algorithm.
-
-        Returns:
-            Tuple of (new values, convergence measure) where new values has shape
-            [n_states]
-        """
-        new_values = self._update_values(
-            self.batched_states,
-            self.problem.action_space,
-            self.problem.random_event_space,
-            self.gamma,
-            self.values,
-        )
-
-        # Calculate convergence measure, span of differences in values
-        # as in mdptoolbox
-        # https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/mdp.py
-        # https://github.com/sawcordwell/pymdptoolbox/blob/master/src/mdptoolbox/util.py
-        conv = self._get_span(new_values, self.values)
-        return new_values, conv
-
     def _get_span(
-        self, new_values: Float[Array, "n_states"], old_values: Float[Array, "n_states"]
+        self,
+        new_values: ValueFunction,
+        old_values: ValueFunction,
     ) -> float:
         """Get the span of differences in values.
 
@@ -427,6 +400,45 @@ class ValueIteration(Solver, CheckpointMixin):
         """
         delta = new_values - old_values
         return jnp.max(delta) - jnp.min(delta)
+
+    def _get_max_diff(
+        self,
+        new_values: ValueFunction,
+        old_values: ValueFunction,
+    ) -> float:
+        """Get the maximum absolute difference between value functions.
+
+        Args:
+            new_values: Updated value function [n_states]
+            old_values: Previous value function [n_states]
+
+        Returns:
+            Maximum absolute difference between values
+        """
+        return jnp.max(jnp.abs(new_values - old_values))
+
+    def _iteration_step(self) -> tuple[ValueFunction, float]:
+        """Perform one iteration of the solution algorithm.
+
+        Returns:
+            Tuple of (new values, convergence measure) where new values has shape
+            [n_states]
+        """
+        new_values = self._update_values(
+            self.batched_states,
+            self.problem.action_space,
+            self.problem.random_event_space,
+            self.gamma,
+            self.values,
+        )
+
+        # Calculate convergence measure
+        conv = self._convergence_test_fn(new_values, self.values)
+        logger.info(
+            f"Iteration {self.iteration}: {self._convergence_desc}: {conv:{self.convergence_format}}"
+        )
+
+        return new_values, conv
 
     def _update_values(
         self,
@@ -494,11 +506,7 @@ class ValueIteration(Solver, CheckpointMixin):
             new_values, conv = self._iteration_step()
             self.values = new_values
 
-            logger.info(
-                f"Iteration {self.iteration} span: {conv:{self.convergence_format}}"
-            )
-
-            if conv < self._thresh:
+            if conv < self.conv_threshold:
                 logger.info(
                     f"Convergence threshold reached at iteration {self.iteration}"
                 )
@@ -510,7 +518,7 @@ class ValueIteration(Solver, CheckpointMixin):
             ):
                 self.save(self.iteration)
 
-        if conv >= self._thresh:
+        if conv >= self.conv_threshold:
             logger.info("Maximum iterations reached")
 
         # Final checkpoint if enabled

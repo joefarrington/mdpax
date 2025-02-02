@@ -22,7 +22,7 @@ Solver
 
 .. autoclass:: mdpax.core.solver.Solver
    :members:
-   :private-members: _setup_solver, _iteration_step, _initialize_values
+   :private-members: _setup_convergence_testing, _iteration_step, _setup_additional_components
    :special-members: __init__
    :noindex:
 
@@ -58,6 +58,19 @@ Solvers
    :inherited-members:
    :undoc-members:
    :show-inheritance:
+
+.. autoclass:: mdpax.solvers.semi_async_value_iteration.SemiAsyncValueIteration
+   :members:
+   :inherited-members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: mdpax.solvers.policy_iteration.PolicyIteration
+   :members:
+   :inherited-members:
+   :undoc-members:
+   :show-inheritance:
+
 
 Problems
 --------

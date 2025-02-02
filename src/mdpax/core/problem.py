@@ -1,8 +1,10 @@
 """Base class for defining MDP problems in a structured way."""
 
 from abc import ABC, abstractmethod
+from functools import partial
 
 import chex
+import jax
 import jax.numpy as jnp
 from hydra.conf import MISSING, dataclass
 from jax import vmap
@@ -239,10 +241,8 @@ class Problem(ABC):
     def initial_value(self, state: StateVector) -> float:
         """Return initial value estimate for a given state.
 
-        This method defines how to initialize the value function for a single state.
-        The solver will handle vectorization over all states efficiently.
-
-        By default, this method returns 0.0 for all states.
+        By default returns 0.0 for all states. Override this method to provide
+        problem-specific initial value estimates.
 
         Args:
             state: State vector [state_dim]
@@ -251,6 +251,23 @@ class Problem(ABC):
             Initial value estimate for the given state
         """
         return 0.0
+
+    def initial_policy(self, state: StateVector) -> ActionVector:
+        """Get initial policy for a state.
+
+        By default, raises NotImplementedError to indicate no custom policy is defined.
+        Can be overridden to provide a custom initial policy.
+
+        Args:
+            state: Current state vector [state_dim]
+
+        Returns:
+            Initial action vector [action_dim] for the state
+
+        Raises:
+            NotImplementedError: If no custom initial policy is defined
+        """
+        raise NotImplementedError("No custom initial policy defined")
 
     def build_transition_and_reward_matrices(
         self, normalization_tolerance: float = 1e-4
@@ -323,16 +340,19 @@ class Problem(ABC):
         next_states, rewards = next_states_rewards
         probs = v_probability(states, actions, random_events)
 
+        # JIT compile the state index conversion: it's called many times
+        @partial(jax.jit, static_argnums=(0,))
+        def batch_get_indices(self, states):
+            return vmap(
+                vmap(
+                    vmap(self.state_to_index, in_axes=0),  # Random events
+                    in_axes=0,  # Actions
+                ),
+                in_axes=0,  # States
+            )(states)
+
         # Convert all next states to indices
-        ns_indices = vmap(
-            vmap(
-                vmap(self.state_to_index, in_axes=0),  # Random events
-                in_axes=0,  # Actions
-            ),
-            in_axes=0,  # States
-        )(
-            next_states
-        )  # [S, A, E]
+        ns_indices = batch_get_indices(self, next_states)  # [S, A, E]
 
         # Initialize matrices
         P: Float[Array, "n_actions n_states n_states"] = jnp.zeros((A, S, S))
@@ -345,8 +365,18 @@ class Problem(ABC):
         rewards = rewards.reshape(S, A, E)  # Ensure 3D shape
         R = jnp.sum(probs * rewards, axis=-1)  # [S, A]
 
-        # For each action a, state s, random event e:
-        # Add prob[s,a,e] to P[a,s,ns_indices[s,a,e]]
+        # JIT compile the probability update: it's called for each action and event
+        @partial(jax.jit, static_argnums=(0,))
+        def update_probabilities(self, P, a, states_idx, probs):
+            return P.at[
+                a,  # Current action
+                jnp.arange(S),  # All source states
+                states_idx,  # Next states for this action
+            ].add(
+                probs
+            )  # Probabilities for this action
+
+        # Build transition matrix
         for e in range(E):
             # Get indices for this random event
             ns_idx = ns_indices[:, :, e]  # [S, A]
@@ -354,15 +384,9 @@ class Problem(ABC):
 
             # For each action
             for a in range(A):
-                P = P.at[
-                    a,  # Current action
-                    jnp.arange(S),  # All source states
-                    ns_idx[:, a],  # Next states for this action
-                ].add(
-                    p[:, a]
-                )  # Probabilities for this action
+                P = update_probabilities(self, P, a, ns_idx[:, a], p[:, a])
 
-        # Check if probabilities sum close enough to 1 before normalizing
+        # Check probability sums
         row_sums = jnp.sum(P, axis=-1)  # [A, S]
         max_deviation = jnp.max(jnp.abs(row_sums - 1.0))
         if max_deviation > normalization_tolerance:
@@ -376,8 +400,7 @@ class Problem(ABC):
                 f"the tolerance of {normalization_tolerance}"
             )
 
-        # Normalize transition probabilities by dividing each row by its sum
-        # Only reaches here if all probabilities are within tolerance
+        # Normalize probabilities
         row_sums = row_sums.reshape(A, S, 1)  # Add dimension for broadcasting
         P = P / jnp.where(row_sums > 0, row_sums, 1.0)  # Avoid division by zero
 

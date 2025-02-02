@@ -11,117 +11,136 @@ from mdpax.problems.forest import Forest
 from mdpax.problems.perishable_inventory.de_moor_single_product import (
     DeMoorSingleProductPerishable,
 )
-from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.solvers.semi_async_value_iteration import SemiAsyncValueIteration
 
 jax.config.update("jax_enable_x64", True)
 
 
 @pytest.mark.parametrize(
-    "params,convergence_test",
+    "params",
     [
+        # Basic test, batch_size > n_states so no different to ValueIteration
         pytest.param(
-            {"S": 3, "r1": 4.0, "r2": 2.0, "p": 0.1},
-            "span",
-            id="forest/default/span",
+            {
+                "S": 3,
+                "r1": 4.0,
+                "r2": 2.0,
+                "p": 0.1,
+                "max_batch_size": 1024,
+                "shuffle_states": False,
+            },
+            id="forest/default",
         ),
+        # Test where batch_size < n_states so will be different to ValueIteration
         pytest.param(
-            {"S": 3, "r1": 4.0, "r2": 2.0, "p": 0.1},
-            "max_diff",
-            id="forest/default/max_diff",
+            {
+                "S": 256,
+                "r1": 2.0,
+                "r2": 8.0,
+                "p": 0.2,
+                "max_batch_size": 64,
+                "shuffle_states": False,
+            },
+            id="forest/states_gt_batch_size",
         ),
+        # Test where batch_size < n_states and states are shuffled
         pytest.param(
-            {"S": 5, "r1": 10.0, "r2": 5.0, "p": 0.05},
-            "span",
-            id="forest/large_rewards/span",
-        ),
-        pytest.param(
-            {"S": 5, "r1": 10.0, "r2": 5.0, "p": 0.05},
-            "max_diff",
-            id="forest/large_rewards/max_diff",
-        ),
-        pytest.param(
-            {"S": 4, "r1": 2.0, "r2": 8.0, "p": 0.2},
-            "span",
-            id="forest/high_risk/span",
-        ),
-        pytest.param(
-            {"S": 4, "r1": 2.0, "r2": 8.0, "p": 0.2},
-            "max_diff",
-            id="forest/high_risk/max_diff",
+            {
+                "S": 256,
+                "r1": 2.0,
+                "r2": 8.0,
+                "p": 0.2,
+                "max_batch_size": 64,
+                "shuffle_states": True,
+            },
+            id="forest/states_gt_batch_size_shuffle",
         ),
     ],
 )
-def test_forest_matches_pymdptoolbox(params, convergence_test):
+def test_forest_matches_pymdptoolbox(params):
     """Test policy matches pymdptoolbox implementation.
 
-    Verifies that our implementation produces the same policies as pymdptoolbox.
-    When using span convergence (like pymdptoolbox), also verifies that values
-    and number of iterations match. When using max_diff convergence, only
-    verifies that the final policy matches since the convergence path will differ.
+    Verifies that our implementation produces the same policies as
+    pymdptoolbox for the Forest Management
+    problem under different parameter settings.
     """
+
     # Get matrices from both implementations
-    P, R = mdptoolbox.example.forest(**params)
+    P, R = mdptoolbox.example.forest(
+        S=params["S"], r1=params["r1"], r2=params["r2"], p=params["p"]
+    )
     vi = mdptoolbox.mdp.ValueIteration(P, R, 0.9, epsilon=0.01)
     vi.run()
     pymdptoolbox_policy = np.array(vi.policy)
-    pymdptoolbox_values = np.array(vi.V)
-    pymdptoolbox_iter = vi.iter
 
-    forest = Forest(**params)
-    solver = ValueIteration(
-        forest, gamma=0.9, epsilon=0.01, verbose=0, convergence_test=convergence_test
+    forest = Forest(S=params["S"], r1=params["r1"], r2=params["r2"], p=params["p"])
+    solver = SemiAsyncValueIteration(
+        forest,
+        gamma=0.9,
+        epsilon=0.01,
+        verbose=0,
+        max_batch_size=params["max_batch_size"],
+        shuffle_states=params["shuffle_states"],
     )
     result = solver.solve()
     mdpax_policy = result.policy.reshape(-1)
-    mdpax_values = result.values.reshape(-1)
-    mdpax_iter = result.info.iteration
 
-    # Policy comparison (integer arrays) - always check this
+    # Policy comparison (integer arrays)
     assert jnp.array_equal(
         mdpax_policy, pymdptoolbox_policy
     ), "Policy doesn't match pymdptoolbox"
 
-    # Only compare values and iterations when using span convergence (like pymdptoolbox)
-    if convergence_test == "span":
-        # Values comparison (float arrays)
-        assert mdpax_values == pytest.approx(
-            pymdptoolbox_values, rel=1e-5
-        ), "Values don't match pymdptoolbox"
-
-        # Iteration comparison (integers)
-        assert (
-            mdpax_iter == pymdptoolbox_iter
-        ), "Number of iterations doesn't match pymdptoolbox"
-
 
 @pytest.mark.parametrize(
-    "issuing_policy,reported_policy_filename",
+    "issuing_policy,shuffle_states,reported_policy_filename",
     [
         pytest.param(
             "lifo",
+            False,
             "de_moor_perishable_m2_exp1_reported_policy.csv",
             id="de_moor/m2/exp1",
         ),
         pytest.param(
             "fifo",
+            False,
             "de_moor_perishable_m2_exp2_reported_policy.csv",
             id="de_moor/m2/exp2",
+        ),
+        pytest.param(
+            "lifo",
+            True,
+            "de_moor_perishable_m2_exp1_reported_policy.csv",
+            id="de_moor/m2/exp1_shuffle",
+        ),
+        pytest.param(
+            "fifo",
+            True,
+            "de_moor_perishable_m2_exp2_reported_policy.csv",
+            id="de_moor/m2/exp2_shuffle",
         ),
     ],
 )
 def test_de_moor_matches_paper(
-    tmpdir, shared_datadir, issuing_policy, reported_policy_filename
+    tmpdir, shared_datadir, issuing_policy, shuffle_states, reported_policy_filename
 ):
     """Test policy matches results from original paper.
 
     Verifies that our implementation produces the same policies as reported
-    in Figure 3 of De Moor et al. (2022) for both LIFO and FIFO cases.
+    in Figure 3 of De Moor et al. (2022) for both LIFO and FIFO cases, and when
+    states are shuffled or not.
     """
     # Change working directory to avoid clutter
     os.chdir(tmpdir)
 
     problem = DeMoorSingleProductPerishable(issue_policy=issuing_policy)
-    solver = ValueIteration(problem, gamma=0.99, epsilon=1e-5, verbose=0)
+    solver = SemiAsyncValueIteration(
+        problem,
+        gamma=0.99,
+        epsilon=1e-5,
+        verbose=0,
+        max_batch_size=64,
+        shuffle_states=shuffle_states,
+    )
     result = solver.solve(max_iterations=5000)
     policy = result.policy.reshape(-1)
 
@@ -183,7 +202,10 @@ def test_de_moor_matches_viso_jax_reference_policy(
         lead_time=lead_time,
         issue_policy=issue_policy,
     )
-    solver = ValueIteration(problem, gamma=0.99, epsilon=1e-5, verbose=0)
+    # This scenario has 14.6k states, < 1024 batch size so will be different to ValueIteration
+    solver = SemiAsyncValueIteration(
+        problem, gamma=0.99, epsilon=1e-5, verbose=0, max_batch_size=1024
+    )
     result = solver.solve(max_iterations=5000)
     policy = result.policy.reshape(-1)
     reported_policy = pd.read_csv(

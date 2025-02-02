@@ -10,6 +10,7 @@ from loguru import logger
 from mdpax.core.problem import Problem, ProblemConfig
 from mdpax.core.solver import SolverConfig, SolverInfo, SolverState
 from mdpax.solvers.value_iteration import ValueIteration
+from mdpax.utils.logging import get_convergence_format
 from mdpax.utils.types import (
     ValueFunction,
 )
@@ -151,15 +152,143 @@ class PeriodicValueIteration(ValueIteration):
         """Initialize solver."""
         super().__init__(problem=problem, config=config, **kwargs)
 
-        self.period = self.config.period
+    def _setup_config(
+        self, problem: Problem, config: SolverConfig | None = None, **kwargs
+    ) -> None:
+        super()._setup_config(problem, config, **kwargs)
         self.clear_value_history_on_convergence = (
             self.config.clear_value_history_on_convergence
         )
+        self.period = self.config.period
 
+    def _setup_convergence_testing(self) -> None:
+        """Setup convergence test.
+
+        For periodic value iteration, we use the span of differences over a period
+        as the convergence measure. The convergence threshold is simply epsilon
+        (no adjustment for gamma needed since we're comparing over a period).
+        """
+        self._convergence_test_fn = self._get_periodic_span
+        self.conv_threshold = self.epsilon
+        self._convergence_desc = "period_span"
+        # Get convergence format for logging convergence metrics
+        self.convergence_format = get_convergence_format(float(self.conv_threshold))
+
+    def _initialize_solver_state_elements(self) -> None:
+        """Initialize solver state elements."""
+        super()._initialize_solver_state_elements()
         # Initialize value history in CPU memory
         self.value_history = np.zeros((self.period + 1, self.problem.n_states))
         self.history_index: int = 0
         self.value_history[0] = np.array(self.values)
+
+    def _get_periodic_span(
+        self,
+        new_values: ValueFunction,
+        old_values: ValueFunction,
+        history_index: int,
+        period: int,
+        value_history: Float[Array, "period_plus_one n_states"],
+        iteration: int,
+        gamma: float,
+    ) -> float:
+        """Calculate convergence measure based on span of differences over a period.
+
+        For undiscounted problems (gamma=1), this is the span of differences between
+        current values and values from one period ago. For discounted problems,
+        we sum consecutive differences over the period, adjusting for the discount factor.
+
+        Args:
+            new_values: Current value function [n_states]
+            old_values: Previous value function [n_states] (unused)
+            history_index: Current position in circular history buffer
+            period: Length of period to check
+            value_history: History of values [period+1, n_states]
+            iteration: Current iteration number
+            gamma: Discount factor
+
+        Returns:
+            Span of differences over the period
+        """
+        if iteration < period:
+            return float("inf")
+
+        if gamma == 1.0:
+            return self._calculate_period_span_without_discount(
+                new_values, history_index, period, value_history
+            )
+        else:
+            return self._calculate_period_span_with_discount(
+                new_values, history_index, period, value_history, iteration, gamma
+            )
+
+    def _calculate_period_span_without_discount(
+        self,
+        values: ValueFunction,
+        history_index: int,
+        period: int,
+        value_history: Float[Array, "period_plus_one n_states"],
+    ) -> float:
+        """Calculate span of value changes over a period without discounting.
+
+        For problems without discounting (gamma=1), we simply compare current values
+        with values from one period ago. The circular buffer is arranged so that
+        index (i+1) % (period+1) contains values from one period ago.
+
+        Args:
+            values: Current value function [n_states]
+            history_index: Current position in circular history buffer
+            period: Length of period to check
+            value_history: History of values [period+1, n_states]
+
+        Returns:
+            Span of differences over the period
+        """
+        prev_index = (history_index + 1) % (period + 1)
+        values_prev = jnp.array(value_history[prev_index])
+        return self._get_span(values, values_prev)
+
+    def _calculate_period_span_with_discount(
+        self,
+        values: ValueFunction,
+        history_index: int,
+        period: int,
+        value_history: Float[Array, "period_plus_one n_states"],
+        iteration: int,
+        gamma: float,
+    ) -> float:
+        """Calculate span of undiscounted value changes over a period.
+
+        For discounted problems (gamma<1), we sum the differences between consecutive
+        steps in the period, adjusting for the discount factor. The differences
+        are scaled by 1/gamma^(current_iteration - p - 1) to remove discounting.
+
+        Args:
+            values: Current value function [n_states]
+            history_index: Current position in circular history buffer
+            period: Length of period to check
+            value_history: History of values [period+1, n_states]
+            iteration: Current iteration number
+            gamma: Discount factor
+
+        Returns:
+            Span of differences over the period
+        """
+        period_deltas = np.zeros_like(values)
+
+        for p in range(period):
+            curr_index = (history_index - p) % (period + 1)
+            prev_index = (curr_index - 1) % (period + 1)
+
+            values_curr = value_history[curr_index]
+            values_prev = value_history[prev_index]
+
+            period_deltas += (values_curr - values_prev) / (
+                gamma ** (iteration - p - 1)
+            )
+
+        period_deltas = jnp.array(period_deltas)
+        return jnp.max(period_deltas) - jnp.min(period_deltas)
 
     def _iteration_step(self) -> tuple[ValueFunction, float]:
         """Perform one iteration of the solution algorithm.
@@ -180,21 +309,16 @@ class PeriodicValueIteration(ValueIteration):
         self.history_index = (self.history_index + 1) % (self.period + 1)
         self.value_history[self.history_index] = np.array(new_values)
 
-        # Check periodic convergence if we have enough history
-        if self.iteration >= self.period:
-            if self.gamma == 1.0:
-                min_delta, max_delta = self._calculate_period_deltas_without_discount(
-                    new_values
-                )
-            else:
-                min_delta, max_delta = self._calculate_period_deltas_with_discount(
-                    new_values, self.gamma
-                )
-            # Convergence measure is the span of period deltas
-            conv = max_delta - min_delta
-        else:
-            # Not enough history yet
-            conv = float("inf")
+        # Calculate convergence using the test function
+        conv = self._convergence_test_fn(
+            new_values,
+            self.values,
+            self.history_index,
+            self.period,
+            self.value_history,
+            self.iteration,
+            self.gamma,
+        )
 
         return new_values, conv
 
@@ -214,11 +338,11 @@ class PeriodicValueIteration(ValueIteration):
             self.values = new_values
 
             logger.info(
-                f"Iteration {self.iteration}: period_span: {conv:{self.convergence_format}}"
+                f"Iteration {self.iteration}: {self._convergence_desc}: {conv:{self.convergence_format}}"
             )
 
             # Check convergence
-            if conv < self.epsilon:
+            if conv < self.conv_threshold:
                 logger.info(
                     f"Convergence threshold reached at iteration {self.iteration}"
                 )
@@ -230,7 +354,7 @@ class PeriodicValueIteration(ValueIteration):
             ):
                 self.save(self.iteration)
 
-        if conv >= self.epsilon:
+        if conv >= self.conv_threshold:
             logger.info("Maximum iterations reached")
 
         # Final checkpoint if enabled
@@ -243,61 +367,9 @@ class PeriodicValueIteration(ValueIteration):
         logger.info("Policy extracted")
 
         logger.success("Periodic value iteration completed")
-        if conv < self.epsilon:
+        if conv < self.conv_threshold:
             self._clear_value_history()
         return self.solver_state
-
-    def _calculate_period_deltas_without_discount(
-        self, values: ValueFunction
-    ) -> tuple[float, float]:
-        """Return min and max value changes over a period without discounting.
-
-        For problems without discounting (gamma=1), we simply compare current values
-        with values from one period ago. The circular buffer is arranged so that
-        index (i+1) % (period+1) contains values from one period ago.
-
-        Args:
-            values: Current value function [n_states]
-
-        Returns:
-            Tuple of (min_delta, max_delta) over the period
-        """
-        prev_index = (self.history_index + 1) % (self.period + 1)
-        values_prev = jnp.array(self.value_history[prev_index])
-        value_diffs = values - values_prev
-        return jnp.min(value_diffs), jnp.max(value_diffs)
-
-    def _calculate_period_deltas_with_discount(
-        self, values: ValueFunction, gamma: float
-    ) -> tuple[float, float]:
-        """Return min and max undiscounted value changes over a period.
-
-        For discounted problems (gamma<1), we sum the differences between consecutive
-        steps in the period, adjusting for the discount factor. The differences
-        are scaled by 1/gamma^(current_iteration - p - 1) to remove discounting.
-
-        Args:
-            values: Current value function [n_states]
-            gamma: Discount factor
-
-        Returns:
-            Tuple of (min_delta, max_delta) over the period
-        """
-        period_deltas = np.zeros_like(values)
-
-        for p in range(self.period):
-            curr_index = (self.history_index - p) % (self.period + 1)
-            prev_index = (curr_index - 1) % (self.period + 1)
-
-            values_curr = self.value_history[curr_index]
-            values_prev = self.value_history[prev_index]
-
-            period_deltas += (values_curr - values_prev) / (
-                gamma ** (self.iteration - p - 1)
-            )
-
-        period_deltas = jnp.array(period_deltas)
-        return jnp.min(period_deltas), jnp.max(period_deltas)
 
     def _clear_value_history(self) -> None:
         """Clear value history to free memory after convergence."""
