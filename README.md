@@ -21,7 +21,7 @@ You can run MDPax on your local GPU, or try it for free using [Google Colab](htt
 
 MDPax is a Python package for solving large-scale MDPs, leveraging JAX's support for vectorization, parallelization, and just-in-time (JIT) compilation on GPUs. 
 
-The package is adapted from the research code developed in [Farrington et al (2023)](https://arxiv.org/abs/2303.10672). We demonstrated that this approach is particularly well-suited for perishable inventory management problems where the state space grows exponentially with the number of products and the maximum useful life of the products. By implementing the problems in JAX and using consumer-grade GPUs (or freely available GPUs on services such as Google Colab) it is possible to compute the exact solution for realistically sized perishable inventory problems where this was recently reported to be infeasible or impractical.
+The package is adapted from the research code developed for [Farrington et al (2025)](https://doi.org/10.1007/s10479-025-06551-6) (a [preprint](https://arxiv.org/abs/2303.10672) was released in 2023). We demonstrated that this approach is particularly well-suited for perishable inventory management problems where the state space grows exponentially with the number of products and the maximum useful life of the products. By implementing the problems in JAX and using consumer-grade GPUs (or freely available GPUs on services such as Google Colab) it is possible to compute the exact solution for realistically sized perishable inventory problems where this was recently reported to be infeasible or impractical.
 
 Traditional value iteration implementations face two main challenges with large state spaces:
 1. Memory requirements - the full transition matrix grows with the square of the state space size
@@ -111,7 +111,7 @@ A simple forest management problem adapted from [pymdptoolbox](https://github.co
 
 ### Perishable inventory management problems
 
-These problems demonstrate the package's ability to handle large state spaces in inventory management scenarios and were included in [Farrington et al. (2023)](https://arxiv.org/abs/2303.10672) as examples to demonstrate the benefits of implementing value iteration in JAX.
+These problems demonstrate the package's ability to handle large state spaces in inventory management scenarios and were included in [Farrington et al. (2025)](https://doi.org/10.1007/s10479-025-06551-6) as examples to demonstrate the benefits of implementing value iteration in JAX.
 
 #### De Moor Single Product Perishable [(De Moor et al. 2022)](https://doi.org/10.1016/j.ejor.2021.10.045)
 A single-product inventory system with positive lead time and fixed useful life. Orders placed today arrive after a fixed lead time, and the state must track both current stock levels and orders in transit.
@@ -200,14 +200,14 @@ If you use this software in your research, please cite
 
 The original paper:
 ```bibtex
-@misc{farrington2023,
-      title={Going faster to see further: GPU-accelerated value iteration and simulation for perishable inventory control using JAX}, 
-      author={Joseph Farrington and Kezhi Li and Wai Keong Wong and Martin Utley},
-      year={2023},
-      eprint={2303.10672},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2303.10672}, 
+@article{farrington_going_2025,
+	title = {Going faster to see further: graphics processing unit-accelerated value iteration and simulation for perishable inventory control using {JAX}},
+	url = {https://doi.org/10.1007/s10479-025-06551-6},
+	doi = {10.1007/s10479-025-06551-6},
+	journal = {Annals of Operations Research},
+	author = {Farrington, Joseph and Wong, Wai Keong and Li, Kezhi and Utley, Martin},
+	month = mar,
+	year = {2025},
 }
 ```
 
@@ -230,7 +230,7 @@ The forest management example problem is adapted from [pymdptoolbox](https://git
 ## Related Projects
 
 ### [viso_jax](https://github.com/joefarrington/viso_jax)
-The original research code used to produce the results in [Farrington et al. (2023)](https://arxiv.org/abs/2303.10672). Contains implementations of the perishable inventory problems and the experimental setup used in the paper. While MDPax is designed to be a general-purpose library, viso_jax focuses specifically on reproducing the paper's results and includes a detailed Colab notebook for this purpose.
+The original research code used to produce the results in [Farrington et al. (2025)](https://doi.org/10.1007/s10479-025-06551-6). Contains implementations of the perishable inventory problems and the experimental setup used in the paper. While MDPax is designed to be a general-purpose library, viso_jax focuses specifically on reproducing the paper's results and includes a detailed Colab notebook for this purpose.
 
 ### [Quantitative Economics with JAX](https://jax.quantecon.org/intro.html)
 Tutorials using JAX to solve problems from quantitative economics, including value function iteration and policy iteration for MDPs. 
