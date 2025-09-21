@@ -29,6 +29,15 @@ jobs:
         run: |
           uv sync --all-extras --dev
           
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          uv run pytest tests -v -m "not slow"
+          uv run pytest tests -v -m "not slow" --cov=mdpax --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest'  # Only upload from one platform
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}

@@ -62,7 +62,8 @@ dev = [
     "sphinx-rtd-theme>=3.0.2",
     "nbsphinx>=0.9.6",
     "ipython>=8.18.1",
-    "myst-parser>=4.0.0"
+    "myst-parser>=4.0.0",
+    "pytest-cov>=7.0.0",
 ]
 
 [build-system]
@@ -96,3 +97,22 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "serial",
 ]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
+show_missing = true
