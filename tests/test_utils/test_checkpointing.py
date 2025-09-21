@@ -1,5 +1,7 @@
 """Tests for checkpointing functionality."""
 
+import time
+
 import jax.numpy as jnp
 import pytest
 
@@ -27,14 +29,17 @@ def test_checkpoint_save_restore(tmp_path):
         gamma=0.99,
         epsilon=1e-4,
         checkpoint_dir=checkpoint_dir,
-        checkpoint_frequency=5,
+        checkpoint_frequency=1,
         verbose=0,
     )
 
     # Run for a few iterations
-    solver.solve(max_iterations=20)
+    solver.solve(max_iterations=5)
     values_before = solver.values.copy()
     iter_before = solver.iteration
+
+    # Small delay to let async checkpointing finish
+    time.sleep(1)
 
     # Create new solver and load checkpoint
     new_solver = ValueIteration.restore(checkpoint_dir)
@@ -63,14 +68,17 @@ def test_lightweight_checkpoint_save_load(tmp_path):
         gamma=0.99,
         epsilon=1e-4,
         checkpoint_dir=checkpoint_dir_first,
-        checkpoint_frequency=5,
+        checkpoint_frequency=1,
         verbose=0,
     )
 
     # Run for a few iterations
-    solver.solve(max_iterations=20)
+    solver.solve(max_iterations=5)
     values_before = solver.values.copy()
     iter_before = solver.iteration
+
+    # Small delay to let async checkpointing finish
+    time.sleep(1)
 
     checkpoint_dir_second = tmp_path / "checkpoints" / "test_lightweight_save_load_2"
 

@@ -4,20 +4,40 @@ on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up uv
-        # Install a specific uv version using the installer
+      
+      - name: Set up uv (Unix)
+        if: runner.os != 'Windows'
         run: curl -LsSf https://astral.sh/uv/0.5.14/install.sh | sh
+        
+      - name: Set up uv (Windows)
+        if: runner.os == 'Windows'
+        run: powershell -c "irm https://astral.sh/uv/0.5.14/install.ps1 | iex"
+        
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
           python-version-file: "pyproject.toml"
+          
       - name: Install the project
         run: |
           uv sync --all-extras --dev
-      - name: Run tests
+          
+      - name: Run tests with coverage
         run: |
-          JAX_PLATFORMS=cpu uv run pytest tests -v -m "not slow"
+          uv run pytest tests -v -m "not slow" --cov=mdpax --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest'  # Only upload from one platform
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}
