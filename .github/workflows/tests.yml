@@ -31,4 +31,4 @@ jobs:
           
       - name: Run tests
         run: |
-          JAX_PLATFORMS=cpu uv run pytest tests -v -m "not slow"
+          uv run pytest tests -v -m "not slow"
