@@ -15,7 +15,10 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "jax[cuda12]>=0.4.30",
+    # Linux: CUDA-enabled JAX
+    "jax[cuda12]>=0.4.30; sys_platform == 'linux'",
+    # Other platforms: CPU-only
+    "jax>=0.4.30; sys_platform != 'linux'",
     "chex>=0.1.88",
     "numpyro>=0.16.1",
     "orbax>=0.1.9",
@@ -40,6 +43,7 @@ examples = [
 ]
 examples-colab = [
     "pymdptoolbox>=4.0b3",
+    "orbax-checkpoint==0.11.23",
 ]
 
 [dependency-groups]
