@@ -175,8 +175,11 @@ uv sync # Using uv
 # Install pre-commit hooks
 pre-commit install
 
-# Run tests
-pytest tests/
+# Run a subset of tests (suitable for CPU)
+uv run pytest tests -v -m "not slow"
+
+# Run all tests (requires a GPU)
+uv run pytest tests
 ```
 
 The development environment includes:
