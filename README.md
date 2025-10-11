@@ -68,7 +68,11 @@ For GPU support, ensure your NVIDIA drivers and CUDA toolkit are compatible with
 
 ### CPU only
 
-MDPax will automatically fall back to CPU on Linux if no GPU is detected, though performance will be significantly slower for large problems.
+MDPax will automatically fall back to CPU on Linux if no GPU is detected, though performance will be significantly slower for large problems. If CUDA libraries are installed but no GPU hardware is available, you may need to force CPU execution by setting:
+
+```bash
+export JAX_PLATFORMS=cpu
+```
 
 **Windows/macOS:** JAX does not currently support GPUs on Windows and only has experimental support for Apple GPUs on macOS. MDPax therefore uses CPU-only versions of JAX on these platforms, giving reduced performance.
 
@@ -177,11 +181,13 @@ uv sync # Using uv
 pre-commit install
 
 # Run a subset of tests (suitable for CPU)
-uv run pytest tests -v -m "not slow"
+uv run pytest tests -m "not slow"
 
 # Run all tests (requires a GPU)
 uv run pytest tests
 ```
+
+Running the tests using the commands above will print a code coverage report in the terminal.
 
 The development environment includes:
 
