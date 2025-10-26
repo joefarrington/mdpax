@@ -5,7 +5,7 @@ description = "GPU-accelerated MDP solvers in Python with JAX"
 authors = [{name = "Joe Farrington", email = "farrington.joe@gmail.com"}]
 license = { text = "MIT" }
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14" 
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
