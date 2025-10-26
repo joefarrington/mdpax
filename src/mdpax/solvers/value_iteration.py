@@ -434,9 +434,6 @@ class ValueIteration(Solver, CheckpointMixin):
 
         # Calculate convergence measure
         conv = self._convergence_test_fn(new_values, self.values)
-        logger.info(
-            f"Iteration {self.iteration}: {self._convergence_desc}: {conv:{self.convergence_format}}"
-        )
 
         return new_values, conv
 
@@ -505,6 +502,10 @@ class ValueIteration(Solver, CheckpointMixin):
             self.iteration += 1
             new_values, conv = self._iteration_step()
             self.values = new_values
+
+            logger.info(
+                f"Iteration {self.iteration}: {self._convergence_desc}: {conv:{self.convergence_format}}"
+            )
 
             if conv < self.conv_threshold:
                 logger.info(
