@@ -454,9 +454,6 @@ class SemiAsyncValueIteration(ValueIteration):
 
         # Check convergence using selected test
         conv = self._convergence_test_fn(new_values, self.values)
-        logger.info(
-            f"Iteration {self.iteration}: {self._convergence_desc}: {conv:{self.convergence_format}}"
-        )
 
         return new_values, conv
 
@@ -474,6 +471,10 @@ class SemiAsyncValueIteration(ValueIteration):
             self.iteration += 1
             new_values, conv = self._iteration_step()
             self.values = new_values
+
+            logger.info(
+                f"Iteration {self.iteration}: {self._convergence_desc}: {conv:{self.convergence_format}}"
+            )
 
             if conv < self.conv_threshold:
                 logger.info(
