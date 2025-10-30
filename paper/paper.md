@@ -12,10 +12,13 @@ authors:
     corresponding: True
   - name: Wai Keong Wong
     affiliation: "1, 2, 3"
+    orcid: 0000-0002-5742-0108
   - name: Kezhi Li
     affiliation: 1
+    orcid: 0000-0003-3073-3128
   - name: Martin Utley
     affiliation: 4
+    orcid: 0000-0001-9928-1516
 affiliations:
   - name: Institute of Health Informatics, University College London, United Kingdom
     index: 1
@@ -26,7 +29,7 @@ affiliations:
   - name: Clinical Operational Research Unit, University College London, United Kingdom
     index: 4
 
-date: 1 August 2025
+date: 30 October 2025
 bibliography: paper.bib
 ---
 
@@ -58,7 +61,7 @@ MDPax addresses the memory challenge by requiring users to provide a determinist
 
 MDPax has been developed to solve large MDPs with millions of states. For small to medium-sized MDPs MDPax may be slower than existing CPU-based packages due to the overheads introduced by the use of JAX and GPUs, including JIT compilation and data transfer between the host and GPU(s). For large problems, these overheads are outweighed by substantial performance gains.
 
-An early version of MDPax was used in our work to solve large instances of three perishable inventory problems that had previously been described as infeasible or impractical to solve exactly [@farrington_going_2025]. In one case, the original study reported that value iteration using a CPU-based MATLAB implementation failed to converge within a week on an MDP with over 16 million states [@hendrix_computing_2019]. Using MDPax the same algorithm converged in under 3.5 hours on a consumer GPU and, with no code changes, in under 30 minutes using four data-centre grade GPUs.
+An early version of MDPax was used in our work to solve large instances of three perishable inventory problems that had previously been described as infeasible or impractical to solve exactly [@farrington_going_2025]. In one case, the original study reported that value iteration using a CPU-based MATLAB implementation failed to converge within a week on an MDP with over 16 million states [@hendrix_computing_2019]. Using MDPax, the same algorithm consistently converged in under 3.5 hours on a consumer-grade GPU (based on 10 runs using an Nvidia GeForce RTX 3060 GPU, Python 3.12.4 and JAX 0.5.0). The runtime can be further reduced without any code changes using multiple data-centre-grade GPUs [@farrington_going_2025].
 
 # Features and design
 
