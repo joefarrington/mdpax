@@ -1,5 +1,5 @@
 ---
-title: "MDPax: GPU-accelerated MDP solvers in Python with JAX "
+title: "MDPax: GPU-accelerated MDP solvers in Python with JAX"
 tags:
   - Python
   - optimization
@@ -59,7 +59,7 @@ The benefits of GPU-acceleration for exact methods have been demonstrated in the
 
 MDPax addresses the memory challenge by requiring users to provide a deterministic transition function instead of the full transition matrix (similar to the approach used in POMDPs.jl). This function maps a state, action, and random event to the resulting next state and reward, and is used to dynamically compute the next state and reward on demand. MDPax uses JAX to exploit the massive parallel processing capabilities of modern GPUs, significantly reducing the runtime required for solving large MDPs by calculating value updates for batches of states in parallel.
 
-MDPax has been developed to solve large MDPs with millions of states. For small to medium-sized MDPs MDPax may be slower than existing CPU-based packages due to the overheads introduced by the use of JAX and GPUs, including JIT compilation and data transfer between the host and GPU(s). For large problems, these overheads are outweighed by substantial performance gains.
+MDPax has been developed to solve large MDPs with millions of states. For small to medium-sized MDPs, MDPax may be slower than existing CPU-based packages due to the overheads introduced by the use of JAX and GPUs, including JIT compilation and data transfer between the host and GPU(s). For large problems, these overheads are outweighed by substantial performance gains.
 
 An early version of MDPax was used in our work to solve large instances of three perishable inventory problems that had previously been described as infeasible or impractical to solve exactly [@farrington_going_2025]. In one case, the original study reported that value iteration using a CPU-based MATLAB implementation failed to converge within a week on an MDP with over 16 million states [@hendrix_computing_2019]. Using MDPax, the same algorithm consistently converged in under 3.5 hours on a consumer-grade GPU (based on 10 runs using an Nvidia GeForce RTX 3060 GPU, Python 3.12.4 and JAX 0.5.0). The runtime can be further reduced without any code changes using multiple data-centre-grade GPUs [@farrington_going_2025].
 
@@ -69,7 +69,7 @@ MDPax is structured around two core classes: the Problem and the Solver.
 
 The Problem class represents an MDP and is intended to be subclassed by users. To define a custom problem, users implement methods that specify the sets of states and actions, random events and their probabilities, and a deterministic transition function that maps a (state, action, random event) triple to the next state and corresponding reward. MDPax includes four example Problems: a forest management problem adapted from pymdptoolbox [@cordwell_pymdptoolbox_2015] and three perishable inventory problems from the literature [@hendrix_computing_2019; @de_moor_reward_2022; @abouee-mehrizi_platelet_2025].
 
-The Solver class defines a common framework for implementing dynamic programming methods to solve MDPs. MDPax currently includes implementations of three standard algorithms: value iteration, relative value iteration (to optimize the average reward), and policy iteration. It also provides a variant of value iteration for MDPs with periodic dynamics (e.g. when demand depends on the day of the week), and a semi-asynchronous version in which updated values for each batch of states are made available for subsequent batch updates within the same iteration on the same device.
+The Solver class defines a common framework for implementing dynamic programming methods to solve MDPs. MDPax currently includes implementations of three standard algorithms: value iteration, relative value iteration (to optimize the average reward), and policy iteration. It also provides a variant of value iteration for MDPs with periodic dynamics (e.g., when demand depends on the day of the week), and a semi-asynchronous version in which updated values for each batch of states are made available for subsequent batch updates within the same iteration on the same device.
 
 For large problems, solving an MDP can still be time-consuming. MDPax therefore includes checkpointing functionality using Orbax [@gaffney_orbax_2025], enabling users to save and restore the state of the Solver and resume optimization after an interruption.
 
