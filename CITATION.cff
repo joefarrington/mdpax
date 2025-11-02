@@ -1,0 +1,48 @@
+cff-version: "1.2.0"
+authors:
+- family-names: Farrington
+  given-names: Joseph
+  orcid: "https://orcid.org/0000-0003-4156-3419"
+- family-names: Wong
+  given-names: Wai Keong
+  orcid: "https://orcid.org/0000-0002-5742-0108"
+- family-names: Li
+  given-names: Kezhi
+  orcid: "https://orcid.org/0000-0003-3073-3128"
+- family-names: Utley
+  given-names: Martin
+  orcid: "https://orcid.org/0000-0001-9928-1516"
+contact:
+- family-names: Farrington
+  given-names: Joseph
+  orcid: "https://orcid.org/0000-0003-4156-3419"
+doi: 10.5281/zenodo.17488356
+message: If you use this software, please cite our article in the
+  Journal of Open Source Software.
+preferred-citation:
+  authors:
+  - family-names: Farrington
+    given-names: Joseph
+    orcid: "https://orcid.org/0000-0003-4156-3419"
+  - family-names: Wong
+    given-names: Wai Keong
+    orcid: "https://orcid.org/0000-0002-5742-0108"
+  - family-names: Li
+    given-names: Kezhi
+    orcid: "https://orcid.org/0000-0003-3073-3128"
+  - family-names: Utley
+    given-names: Martin
+    orcid: "https://orcid.org/0000-0001-9928-1516"
+  date-published: 2025-10-31
+  doi: 10.21105/joss.08897
+  issn: 2475-9066
+  issue: 114
+  journal: Journal of Open Source Software
+  publisher:
+    name: Open Journals
+  start: 8897
+  title: "MDPax: GPU-accelerated MDP solvers in Python with JAX"
+  type: article
+  url: "https://joss.theoj.org/papers/10.21105/joss.08897"
+  volume: 10
+title: "MDPax: GPU-accelerated MDP solvers in Python with JAX"
