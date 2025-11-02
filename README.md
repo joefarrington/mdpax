@@ -5,6 +5,7 @@
 [![Tests](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml/badge.svg)](https://github.com/joefarrington/mdpax/actions/workflows/tests.yml)
 [![codecov](https://codecov.io/gh/joefarrington/mdpax/graph/badge.svg?token=8P8E8M1BDR)](https://codecov.io/gh/joefarrington/mdpax)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![DOI](https://joss.theoj.org/papers/10.21105/joss.08897/status.svg)](https://doi.org/10.21105/joss.08897)
 
 MDPax is designed for researchers and practitioners who want to solve large Markov Decision Process (MDP) problems but don't want to become experts in graphics processing unit (GPU) programming. By using JAX, we can take advantage of the massive parallel processing power of GPUs while describing new problems using a simple Python interface.
 
@@ -244,9 +245,9 @@ All contributions will be reviewed and should pass the automated checks (tests, 
 
 ## Citation
 
-If you use this software in your research, please cite
+If you use this software in your research, please cite our paper published in the _Journal of Open Source Software (JOSS)_. Citation details are provided in the `CITATION.cff` file. You can also use the **“Cite this repository”** option in the **About** section of this GitHub repository to export the details in APA or BibTeX format.
 
-The original paper:
+If relevant to your work, please also consider citing the paper describing the original research from which MDPax was adapted:
 
 ```bibtex
 @article{farrington_going_2025,
@@ -257,17 +258,6 @@ The original paper:
 	author = {Farrington, Joseph and Wong, Wai Keong and Li, Kezhi and Utley, Martin},
 	month = mar,
 	year = {2025},
-}
-```
-
-The software package:
-
-```bibtex
-@software{mdpax2024github,
-  author = {Joseph Farrington},
-  title = {mdpax: GPU-accelerated MDP solvers in Python with JAX},
-  year = {2024},
-  url = {https://github.com/joefarrington/mdpax},
 }
 ```
 
